@@ -1,8 +1,7 @@
-xCAT extensions
+xCAT Extensions
 ===============
 
-This repository is used to store scripts or tools that can work with xCAT framework.
+This repository is used to hold example scripts and tools that can be used with xCAT.
 
-For more information, pls go to documents list below:
+http://xcat.org
 
-https://github.com/xcat2/xcat-extensions/blob/master/index.rst
