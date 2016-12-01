@@ -5,8 +5,4 @@ This repository is used to store scripts or tools that can work with xCAT framew
 
 For more information, pls go to documents list below:
 
-.. toctree::
-   :maxdepth: 2
-   
-    index.rst
-    partition/index.rst
+https://github.com/xcat2/xcat-extensions/blob/master/index.rst
