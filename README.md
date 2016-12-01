@@ -1,6 +1,3 @@
-# xcat-extensions
-Repos to store scripts for special user cases
-
 xCAT extensions
 ===============
 
