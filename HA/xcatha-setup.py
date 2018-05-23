@@ -72,21 +72,20 @@ class xcat_ha_utils:
         print loginfo
         a=0
         while True:
+            res=os.system(cmd)
+            if res is 0:
+                loginfo=cmd+" [Passed]"
+                return 0
+            else:
+                a += 1
+                if a < 3:
+                    time.sleep(3)
+                    loginfo="Retry "+bytes(a)+" ... ..."+cmd
+                    print loginfo       
             if a==3:
                 loginfo=cmd+" [Failed]"
                 print loginfo
                 return 1
-            if a >0:
-                time.sleep(3)
-                loginfo="Retry "+a+" ... ..."+cmd
-                print loginfo
-                res=os.system(cmd)
-                if res is 0:
-                    loginfo=cmd+" [Passed]"
-                    return 0
-                else:
-                    a += 1
-
 
     def configure_xcat_attribute(self, host, ip):
         "configure xcat MN attribute"
@@ -108,20 +107,26 @@ class xcat_ha_utils:
             current_data_db="sqlite"
         return current_data_db
 
-    def check_database_type(self, dbtype):
+    def get_physical_ip(self, nic):
+        """get physical ip"""
+        main_nic=nic.split(":")[0]
+        f=Popen(('ifconfig',main_nic), stdout=PIPE).stdout
+        data=[eachLine.strip() for eachLine in f]
+        physical_ip=filter(lambda x : 'inet ' in x, data)[0].split(" ")[1]
+        return physical_ip 
+
+    def check_database_type(self, dbtype, vip, nic):
         """if current xcat DB type is different from target type, switch DB to target type"""
         global setup_process_msg
         setup_process_msg="Check database type stage"
         self.log_info(setup_process_msg)
-        #f=Popen(('lsxcatd', '-d'), stdout=PIPE).stdout
-        #data=[eachLine.strip() for eachLine in f]
-        #current_dbtype=filter(lambda x : 'dbengine=' in x, data)[0]
         current_dbtype=self.current_database_type("")
         print "current xCAT database type: "+current_dbtype
         print "target xCAT database type: "+dbtype
         target_dbtype="dbengine=dbtype"
         if current_dbtype != target_dbtype:
-            self.switch_database(dbtype)
+            physical_ip=self.get_physical_ip(nic)
+            self.switch_database(dbtype,vip,physical_ip)
 
     def check_xcat_exist_in_shared_data(self, path):
         """check if xcat data is in shared data directory"""
@@ -160,7 +165,7 @@ class xcat_ha_utils:
             print "Error: target database is not matched [Failed]"
             exit(1)
         
-    def switch_database(self, dbtype):
+    def switch_database(self, dbtype, vip, physical_ip):
         """switch database to target type"""
         global setup_process_msg
         res=self.install_db_package(dbtype)
@@ -168,8 +173,7 @@ class xcat_ha_utils:
             setup_process_msg="Switch to target database stage"
             self.log_info(setup_process_msg)
             if dbtype == "postgresql":
-                #cmd="export "+xcatdb_password+";pgsqlsetup -i -V"
-                cmd="pgsqlsetup -i"
+                cmd="export "+xcatdb_password+";pgsqlsetup -i -a "+vip+" -a "+physical_ip
                 res=self.runcmd(cmd)
                 if res is 0:
                     print "Switch to "+dbtype+" [Passed]"
@@ -401,6 +405,24 @@ class xcat_ha_utils:
     def clean_env(self, vip, nic, host):
         """clean up env when exception happen"""
         self.unconfigure_vip(vip, nic)
+
+    def deactivate_management_node(self, nic, vip, dbtype):
+        """deactivate management node"""
+        global setup_process_msg
+        setup_process_msg="Deactivate stage"
+        self.log_info(setup_process_msg)
+        self.execute_command("chkconfig --level 345 xcatd off")
+        self.execute_command("chkconfig --level 2345 conserver off")
+        self.execute_command("chkconfig --level 2345 dhcpd off")
+        self.execute_command("chkconfig postgresql off")
+        self.execute_command("service conserver stop")
+        self.execute_command("service dhcpd stop")
+        self.execute_command("service named stop")
+        self.execute_command("service xcatd stop")
+        stop_db="service "+dbtype+" stop"
+        self.execute_command(stop_db)
+        self.execute_command("service ntpd restart")
+        self.unconfigure_vip(vip, nic)
  
     def xcatha_setup_mn(self, args):
         """main process"""
@@ -412,7 +434,7 @@ class xcat_ha_utils:
             self.change_hostname(args.host_name,args.virtual_ip)
             if self.check_service_status("xcatd") is not 0:
                 self.install_xcat(xcat_url)
-            self.check_database_type(args.dbtype)
+            self.check_database_type(args.dbtype,args.virtual_ip,args.nic)
             self.configure_shared_data(args.path, shared_fs)
             if self.check_service_status("xcatd") is not 0:
                 print "Error: xCAT service does not work well [Failed]"
@@ -420,6 +442,8 @@ class xcat_ha_utils:
             else:
                 print "xCAT service works well [Passed]"
             self.change_xcat_policy_attribute(args.nic, args.virtual_ip)
+            self.deactivate_management_node(args.nic, args.virtual_ip, args.dbtype) 
+            print "This machine is set to standby management node successfully..."
         except:
             raise HaException("Error: "+setup_process_msg+" [Failed]")
 
