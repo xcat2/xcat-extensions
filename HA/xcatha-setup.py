@@ -128,6 +128,7 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="check if xcat data is in shared data directory"
         self.log_info(setup_process_msg)
+        xcat_path=path+"/install"
         if os.path.exists(xcat_path):
             print "There is xCAT data "+xcat_path+" in shared data "+path
             return True
