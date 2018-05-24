@@ -5,11 +5,15 @@
 # -*- coding: utf-8 -*-
 #  CHANGE HISTORY:
 #   
-#  NAME:  xcatha_setup.py
+#  NAME:  xcatha.py
 #
-#  SYNTAX: xcatha_setup.py -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] 
+#  SYNTAX: xcatha.py -s|--setup -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] 
 #
-#  DESCRIPTION:  Setup this node be the shared data based xCAT MN
+#  SYNTAX: xcatha.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>]
+#
+#  SYNTAX: xcatha.py -d|--deactivate -i <nic> -v <virtual ip>
+#
+#  DESCRIPTION:  Setup/Activate/Deactivate this node be the shared data based xCAT MN
 #
 #  FLAGS:
 #               -p      the shared data directory path
@@ -25,6 +29,7 @@ import os
 import time
 import platform
 import shutil
+import logging
 from subprocess import Popen, PIPE
 import pdb
 
@@ -35,57 +40,69 @@ xcat_install="/tmp/go-xcat --yes install"
 xcatdb_password="XCATPGPW=cluster"
 setup_process_msg=""
 
+#configure logger
+LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+DATE_FORMAT = "%m/%d/%Y %H:%M:%S %p"
+logging.basicConfig(filename = os.path.join(os.getcwd(), 'xcatha.log'), level = logging.INFO, filemode = 'a', format = LOG_FORMAT, datefmt=DATE_FORMAT)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+logger = logging.getLogger('xCAT-HA')
+logger.addHandler(console_handler)
+
+
 class HaException(Exception):
+    """customize exception"""
     def __init__(self,message):
         Exception.__init__(self)
         self.message=message
 
 class xcat_ha_utils:
-
+    """"""
     def log_info(self, message):
+        """print format"""
         print "============================================================================================"
-        print message
-
-    def runcmd(self, cmd):
-        """print and execute command"""
-        print cmd
-        res=os.system(cmd)
-        return res
+        logger.info(message)
 
     def vip_check(self, vip):
         """check if virtual ip can ping or not"""
         global setup_process_msg
         setup_process_msg="Check virtual ip stage"
         self.log_info(setup_process_msg)
-        pingcmd="ping -c 1 -w 10 "+vip
-        res=self.runcmd(pingcmd)
+        cmd="ping -c 1 -w 10 "+vip
+        logger.info(cmd)
+        res=os.system(cmd)
         if res is 0:
-            message="Error: Aborted startup as virtual ip appears to be already active."
-            self.log_info(message)
-            exit(1)
+            message="Aborted startup as virtual ip appears to be already active."
+            logger.error(message)
+            raise HaException("Error: "+setup_process_msg)    
         else:
-            message="virtual ip can be used [Passed]"
-            print message
+            message="virtual ip can be used."
+            logger.info(message)
 
-    def execute_command(self, cmd):
+    def execute_command(self, cmd, retry):
         """execute and retry execute command"""
-        loginfo="Running command:"+cmd
-        print loginfo
+        loginfo="Running "+cmd
+        logger.info(loginfo)
         a=0
         while True:
             res=os.system(cmd)
             if res is 0:
-                loginfo=cmd+" [Passed]"
+                loginfo=cmd+" [passed]"
+                logger.info(cmd)
                 return 0
             else:
+                if retry is 0:
+                    loginfo=cmd+" [Failed]"
+                    logger.error(loginfo)
+                    return 1
                 a += 1
-                if a < 3:
+                if a < retry:
                     time.sleep(3)
                     loginfo="Retry "+bytes(a)+" ... ..."+cmd
-                    print loginfo       
+                    logger.info(loginfo)       
             if a==3:
                 loginfo=cmd+" [Failed]"
-                print loginfo
+                logger.error(loginfo)
                 return 1
 
     def configure_xcat_attribute(self, host, ip):
@@ -122,8 +139,8 @@ class xcat_ha_utils:
         setup_process_msg="Check database type stage"
         self.log_info(setup_process_msg)
         current_dbtype=self.current_database_type("")
-        print "current xCAT database type: "+current_dbtype
-        print "target xCAT database type: "+dbtype
+        logger.info("current xCAT database type: "+current_dbtype)
+        logger.info("target xCAT database type: "+dbtype)
         target_dbtype="dbengine=dbtype"
         if current_dbtype != target_dbtype:
             physical_ip=self.get_physical_ip(nic)
@@ -136,11 +153,11 @@ class xcat_ha_utils:
         self.log_info(setup_process_msg)
         xcat_path=path+"/install"
         if os.path.exists(xcat_path):
-            print "There is xCAT data "+xcat_path+" in shared data "+path
-            return True
+            logger.info("There is xCAT data "+xcat_path+" in shared data "+path)
+            return 1
         else:
-            print "There is no xCAT data "+xcat_path+" in shared data "+path
-            return False
+            logger.error("There is no xCAT data "+xcat_path+" in shared data "+path)
+            return 0
 
     def check_shared_data_db_type(self, tdbtype, path):
         """check if target dbtype is the same with shared data dbtype"""
@@ -159,12 +176,12 @@ class xcat_ha_utils:
                 share_data_db="postgresql"
         else:
             share_data_db="sqlite"
-        print "database type is '"+share_data_db+"' in shared data directory"
+        logger.info("database type is '"+share_data_db+"' in shared data directory")
         if share_data_db == tdbtype:
-            print "target database type is matched [Passed]"
+            logger.info("target database type is matched [Passed]")
         else:
-            print "Error: target database is not matched [Failed]"
-            exit(1)
+            logger.error("Error: target database is not matched [Failed]")
+            raise HaException("Error: "+setup_process_msg)
         
     def switch_database(self, dbtype, vip, physical_ip):
         """switch database to target type"""
@@ -175,13 +192,13 @@ class xcat_ha_utils:
             self.log_info(setup_process_msg)
             if dbtype == "postgresql":
                 cmd="export "+xcatdb_password+";pgsqlsetup -i -a "+vip+" -a "+physical_ip
-                res=self.runcmd(cmd)
+                res=self.execute_command(cmd,0)
                 if res is 0:
-                    print "Switch to "+dbtype+" [Passed]"
+                    logger.info("Switch to "+dbtype+" [Passed]")
                 else:
-                    print "Switch to "+dbtype+" [Failed]"
+                    logger.error("Switch to "+dbtype+" [Failed]")
             else:
-                print "Do not support"+dbtype+" [Failed]"  
+                logger.error("Do not support"+dbtype+" [Failed]")  
  
     def install_db_package(self, dbtype):
         """install database package"""
@@ -191,11 +208,11 @@ class xcat_ha_utils:
         os_name=platform.platform()
         if os_name.__contains__("redhat") and dbtype== "postgresql":  
             cmd="yum -y install postgresql* perl-DBD-Pg"
-            res=self.runcmd(cmd)
+            res=self.execute_command(cmd,0)
             if res is not 0:
-                print "install postgresql* perl-DBD-Pg  package [Failed]"
+                logger.error("install postgresql* perl-DBD-Pg  package [Failed]")
             else:
-                print "install postgresql* perl-DBD-Pg  package [Passed]"     
+                logger.info("install postgresql* perl-DBD-Pg  package [Passed]")     
             return res
 
     def install_xcat(self, url):
@@ -204,27 +221,27 @@ class xcat_ha_utils:
         setup_process_msg="Install xCAT stage"
         self.log_info(setup_process_msg)
         cmd="wget "+url+" -O - >/tmp/go-xcat"
-        res=self.runcmd(cmd)
+        res=self.execute_command(cmd,0)
         if res is 0:
             cmd="chmod +x /tmp/go-xcat"
-            res=self.runcmd(cmd)
+            res=self.execute_command(cmd,0)
             if res is 0:
                 cmd=xcat_install
-                res=self.runcmd(cmd)
+                res=self.execute_command(cmd,0)
                 if res is 0:
                     print "xCAT is installed [Passed]"
                     xcat_env="/opt/xcat/bin:/opt/xcat/sbin:/opt/xcat/share/xcat/tools:"
                     os.environ["PATH"]=xcat_env+os.environ["PATH"]
                     cmd="lsxcatd -v"
-                    self.runcmd(cmd)
-                    return True
+                    self.execute_command(cmd,0)
+                    return 1
                 else:
-                    print "xCAT is installed [Failed]"
+                    logger.error("xCAT is installed [Failed]")
             else:
-                print "chmod [Failed]"
+                logger.error("chmod [Failed]")
         else:
-            print "wget [Failed]"
-        return False
+            logger.error("wget [Failed]")
+        
             
     def configure_vip(self, vip, nic, mask):
         """configure virtual ip"""
@@ -232,14 +249,14 @@ class xcat_ha_utils:
         setup_process_msg="Start configure virtual ip as alias ip stage"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" "+vip+" "+" netmask "+mask
-        res=self.runcmd(cmd)
+        res=self.execute_command(cmd,0)
         if res is 0:
             message="configure virtual IP [passed]."
-            print message
+            logger.info(message)
         else :
             message="Error: configure virtual IP [failed]."
-            print message 
-            exit(1)
+            logger.error(message) 
+            raise HaException("Error: "+setup_process_msg)
         #add virtual ip into /etc/resolve.conf
         msg="add virtual ip "+vip+" into /etc/resolv.conf"
         self.log_info(msg)
@@ -259,8 +276,8 @@ class xcat_ha_utils:
             for line in list1:
                 line=line.rstrip('\n')
                 if keyword in line:
-                    return True
-        return False
+                    return 1
+        return 0
  
     def change_hostname(self, host, ip):
         """change hostname"""
@@ -275,12 +292,11 @@ class xcat_ha_utils:
             hostfile.write(ip_and_host)
             hostfile.close()
         cmd="hostname "+host
-        res=self.runcmd(cmd)
+        res=self.execute_command(cmd,0)
         if res is 0:
-            print cmd+" [Passed]"
+            logger.info(cmd+" [Passed]")
         else:
-            print cmd+" [Failed]"
-
+            logger.error(cmd+" [Failed]")
 
     def unconfigure_vip(self, vip, nic):
         """remove vip from nic and /etc/resolve.conf"""
@@ -288,38 +304,39 @@ class xcat_ha_utils:
         setup_process_msg="remove virtual ip"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" 0.0.0.0 0.0.0.0 &>/dev/null"
-        res=self.runcmd(cmd)
+        res=self.execute_command(cmd,0)
         cmd="ip addr show |grep "+vip+" &>/dev/null"
-        res=self.runcmd(cmd)
+        res=self.execute_command(cmd,0)
         if res is 0:
-            print "Error: fail to remove virtual IP"
-            exit(1)
+            logger.errer("remove virtual IP [Failed]")
+            raise HaException("Error: "+setup_process_msg)
         else:
-            print "Remove virtual IP [Passed]"
-
+            logger.info("Remove virtual IP [Passed]")
+           
     def check_service_status(self, service_name):
         """check service status"""
         global setup_process_msg
         setup_process_msg="Check "+service_name+" service status"
         self.log_info(setup_process_msg)
-        status =self.runcmd('systemctl status '+service_name+ ' > /dev/null')
+        cmd="systemctl status "+service_name+" > /dev/null"
+        status =self.execute_command(cmd,0)
         return status
 
     def finditem(self, n, server):
         """add item into policy table"""
         index=bytes(n)
         cmd="lsdef -t policy |grep 1."+index
-        res=self.runcmd(cmd)
+        res=self.execute_command(cmd,0)
         if res is not 0:
             cmd="chdef -t policy 1."+index+" name="+server+" rule=trusted"
-            res=self.runcmd(cmd)
+            res=self.execute_command(cmd,0)
             if res is 0:
                 loginfo="'"+cmd+"' [Passed]"
-                print loginfo
+                logger.info(loginfo)
                 return 0
             else:
                 loginfo="'"+cmd+"' [Failed]"
-                print loginfo
+                logger.error(loginfo)
                 return 1
         else:
             n+=1
@@ -341,16 +358,18 @@ class xcat_ha_utils:
                     break
         if server:
             cmd="lsdef -t policy -i name|grep "+server
-            res=self.runcmd(cmd)
+            res=self.execute_command(cmd,0)
             if res is not 0:
                 res=self.finditem(3,server)
                 if res is 0:
                     return 0
             else:
                 loginfo=server+" exist in policy table."
+                logger.info(loginfo)
                 return 0
         else:
-            loginfo="Error: get server name "+server+" failed." 
+            loginfo="get server name "+server+" [Failed]" 
+            logger.error(loginfo)
         return 1       
 
     def copy_files(self, sourceDir, targetDir):  
@@ -368,9 +387,9 @@ class xcat_ha_utils:
                 if not os.path.exists(targetF) or (os.path.exists(targetF) and (os.path.getsize(targetF) != os.path.getsize(sourceF))):  
                     #binary
                     open(targetF, "wb").write(open(sourceF, "rb").read())  
-                    print u"%s %s copy complete" %(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), targetF)  
+                    print u"%s copy complete" %(targetF)  
                 else:  
-                    print u"%s %s existed, do not copy it" %(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), targetF)  
+                    print u"%s existed, do not copy it" %(targetF)  
             if os.path.isdir(sourceF):  
                 self.copy_files(sourceF, targetF)
 
@@ -395,7 +414,7 @@ class xcat_ha_utils:
         #create symlink 
         i=0
         while i < len(sharedfs):
-            print "create symlink ..."+sharedfs[i]
+            logger.info("create symlink ..."+sharedfs[i])
             xcat_file_path=path+sharedfs[i]
             if not os.path.islink(sharedfs[i]):
                 if os.path.exists(sharedfs[i]):
@@ -412,9 +431,9 @@ class xcat_ha_utils:
         #2.unlink data in shared data directory
         i=0
         while i < len(sharedfs):
-            print "remove symlink ..."+sharedfs[i]
+            logger.info("remove symlink ..."+sharedfs[i])
             if os.path.islink(sharedfs[i]):
-                os.unlink(xcat_file_path, sharedfs[i])     
+                os.unlink(sharedfs[i])     
             i += 1
 
     def clean_env(self, vip, nic, host):
@@ -427,17 +446,17 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="Deactivate stage"
         self.log_info(setup_process_msg)
-        self.execute_command("chkconfig --level 345 xcatd off")
-        self.execute_command("chkconfig --level 2345 conserver off")
-        self.execute_command("chkconfig --level 2345 dhcpd off")
-        self.execute_command("chkconfig postgresql off")
-        self.execute_command("service conserver stop")
-        self.execute_command("service dhcpd stop")
-        self.execute_command("service named stop")
-        self.execute_command("service xcatd stop")
+        self.execute_command("chkconfig --level 345 xcatd off",3)
+        self.execute_command("chkconfig --level 2345 conserver off",3)
+        self.execute_command("chkconfig --level 2345 dhcpd off",3)
+        self.execute_command("chkconfig postgresql off",3)
+        self.execute_command("service conserver stop",3)
+        self.execute_command("service dhcpd stop",3)
+        self.execute_command("service named stop",3)
+        self.execute_command("service xcatd stop",3)
         stop_db="service "+dbtype+" stop"
-        self.execute_command(stop_db)
-        self.execute_command("service ntpd restart")
+        self.execute_command(stop_db,3)
+        self.execute_command("service ntpd restart",3)
         self.unconfigure_shared_data(shared_fs)
         self.unconfigure_vip(vip, nic)
  
@@ -446,17 +465,17 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="Activate stage"
         self.log_info(setup_process_msg)
-        self.execute_command("chkconfig --level 345 xcatd off")
-        self.execute_command("chkconfig --level 2345 conserver off")
-        self.execute_command("chkconfig --level 2345 dhcpd off")
-        self.execute_command("chkconfig postgresql off")
-        self.execute_command("service conserver start")
-        self.execute_command("service dhcpd start")
-        self.execute_command("service named start")
-        self.execute_command("service xcatd start")
+        self.execute_command("chkconfig --level 345 xcatd off",3)
+        self.execute_command("chkconfig --level 2345 conserver off",3)
+        self.execute_command("chkconfig --level 2345 dhcpd off",3)
+        self.execute_command("chkconfig postgresql off",3)
+        self.execute_command("service conserver start",3)
+        self.execute_command("service dhcpd start",3)
+        self.execute_command("service named start",3)
+        self.execute_command("service xcatd start",3)
         start_db="service "+dbtype+" start"
-        self.execute_command(start_db)
-        self.execute_command("service ntpd restart")
+        self.execute_command(start_db,3)
+        self.execute_command("service ntpd restart",3)
         self.change_hostname(host_name,args.vip)
         self.configure_shared_data(args.path, shared_fs)
         self.configure_vip(vip, nic)
@@ -467,26 +486,32 @@ class xcat_ha_utils:
             self.vip_check(args.virtual_ip)
             if self.check_xcat_exist_in_shared_data(args.path):
                 self.check_shared_data_db_type(args.dbtype,args.path)
-            self.configure_vip(args.virtual_ip,args.nic,args.netmask)
+            if self.configure_vip(args.virtual_ip,args.nic,args.netmask):
+                return 1
             self.change_hostname(args.host_name,args.virtual_ip)
             if self.check_service_status("xcatd") is not 0:
                 self.install_xcat(xcat_url)
             self.check_database_type(args.dbtype,args.virtual_ip,args.nic)
             self.configure_shared_data(args.path, shared_fs)
             if self.check_service_status("xcatd") is not 0:
-                print "Error: xCAT service does not work well [Failed]"
-                exit(1)
+                logger.error("xCAT service does not work well [Failed]")
+                raise HaException("Error: "+setup_process_msg)
             else:
-                print "xCAT service works well [Passed]"
+                logger.info("xCAT service works well [Passed]")
             self.change_xcat_policy_attribute(args.nic, args.virtual_ip)
             self.deactivate_management_node(args.nic, args.virtual_ip, args.dbtype) 
-            print "This machine is set to standby management node successfully..."
+            logger.info("This machine is set to standby management node successfully...")
         except:
-            raise HaException("Error: "+setup_process_msg+" [Failed]")
+            raise HaException("Error: "+setup_process_msg)
 
 def parse_arguments():
     """parse input arguments"""
-    parser = argparse.ArgumentParser(description="setup and configure shared data based xCAT HA MN node")
+    parser = argparse.ArgumentParser(description="Setup/Activate/Deactivate shared data based xCAT HA MN node")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-s', '--setup', help="setup node to be xCAT MN", action='store_true')
+    group.add_argument('-a', '--activate', help="activate node to be xCAT MN", action='store_true')
+    group.add_argument('-d', '--deactivate', help="deactivate node to be xCAT MN", action='store_true')
+
     parser.add_argument('-p', dest="path", required=True, help="shared data directory path")
     parser.add_argument('-v', dest="virtual_ip", required=True, help="virtual IP")
     parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
@@ -500,11 +525,48 @@ def main():
     args=parse_arguments()
     obj=xcat_ha_utils()
     try:
-        obj.xcatha_setup_mn(args)
+        if args.activate:
+            if args.path:
+                logger.error("Option -p is not valid for xCAT MN deactivation")
+                return
+            if not args.netmask:
+                args.netmask="255.255.255.0"
+            if not args.dbtype:
+                args.dbtype="sqlite"
+            if not args.host_name:
+                logger.error("Argument -n is required")
+                return
+
+            obj.log_info("Activating this node as xCAT MN")
+            obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.host_name, args.netmask)
+
+        if args.deactivate:
+            if args.dbtype:
+                logger.error("Option -t is not valid for xCAT MN deactivation")
+                return 1
+            if args.netmask:
+                logger.error("Option -m is not valid for xCAT MN deactivation")
+                return 1
+            if args.host_name:
+                logger.error("Option -n is not valid for xCAT MN deactivation")
+                return 1
+
+            obj.log_info("Deactivating this node as xCAT MN")
+            dbtype=obj.current_database_type("")
+            obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
+
+        if args.setup:
+            if not args.netmask:
+                args.netmask="255.255.255.0"
+            if not args.dbtype:
+                args.dbtype="sqlite"
+            res=obj.xcatha_setup_mn(args)
+            if res:
+                
+                obj.clean_env(args.virtual_ip, args.nic, args.host_name)            
     except HaException,e:
-        error_msg="=================="+e.message+"=================================="
-        print error_msg        
-        print "Error encountered, starting to clean up the environment"
+        logger.error(e.message)
+        logger.error("Error encountered, starting to clean up the environment")
         obj.clean_env(args.virtual_ip, args.nic, args.host_name)
 
 if __name__ == "__main__":
