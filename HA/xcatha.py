@@ -22,8 +22,8 @@
 #               -v      virtual ip address
 #               -n      virtual ip hostname
 #               -m      netmask for the virtual ip address,
-#                       default to 255.255.255.0
-#               -t      target database type, it can be postgresql, default is sqlite
+#                       default is 255.255.255.0
+#               -t      target database type, it can be postgresql or sqlite, default is sqlite
 import argparse
 import os
 import time
@@ -263,7 +263,7 @@ class xcat_ha_utils:
         name_server="nameserver "+vip
         resolv_file="/etc/resolv.conf"
         res=self.find_line(resolv_file, name_server)
-        if res is False:
+        if res is 0:
             resolvefile=open(resolv_file,'a')
             print name_server
             resolvefile.write(name_server)
@@ -287,7 +287,7 @@ class xcat_ha_utils:
         ip_and_host=ip+" "+host
         hostfile="/etc/hosts"
         res=self.find_line(hostfile, ip_and_host)
-        if res is False:
+        if res is 0:
             hostfile=open(hostfile,'a')
             hostfile.write(ip_and_host)
             hostfile.close()
@@ -431,11 +431,16 @@ class xcat_ha_utils:
         #2.unlink data in shared data directory
         i=0
         while i < len(sharedfs):
-            logger.info("remove symlink ..."+sharedfs[i])
+            logger.info("removing symlink ..."+sharedfs[i])
             if os.path.islink(sharedfs[i]):
                 os.unlink(sharedfs[i])     
             i += 1
 
+    def get_hostname_for_ip(self,ip):
+        """get hostname for the passed in ip"""
+        hostname=os.popen("getent hosts "+ip+" | awk -F ' ' '{print $2}' | uniq").read()
+        return hostname
+        
     def clean_env(self, vip, nic, host):
         """clean up env when exception happen"""
         self.unconfigure_shared_data(shared_fs)
@@ -446,6 +451,16 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="Deactivate stage"
         self.log_info(setup_process_msg)
+        #MG How do we know which original IP was used ?
+        real_ip="1.2.3.4"
+        restore_host_name=self.get_hostname_for_ip(real_ip)
+        if restore_host_name:
+            logger.info("Restoring original hostname: " + restore_host_name)
+            self.change_hostname(restore_host_name,vip)
+        else:
+            logger.info("Error: Can not restore original hostname")
+        self.unconfigure_vip(vip, nic)
+        self.unconfigure_shared_data(shared_fs)
         self.execute_command("chkconfig --level 345 xcatd off",3)
         self.execute_command("chkconfig --level 2345 conserver off",3)
         self.execute_command("chkconfig --level 2345 dhcpd off",3)
@@ -457,28 +472,35 @@ class xcat_ha_utils:
         stop_db="service "+dbtype+" stop"
         self.execute_command(stop_db,3)
         self.execute_command("service ntpd restart",3)
-        self.unconfigure_shared_data(shared_fs)
-        self.unconfigure_vip(vip, nic)
  
-    def activate_management_node(self, nic, vip, dbtype, path, hostname, mask):
+    def activate_management_node(self, nic, vip, dbtype, path, mask):
         """activate management node"""
-        global setup_process_msg
-        setup_process_msg="Activate stage"
-        self.log_info(setup_process_msg)
-        self.execute_command("chkconfig --level 345 xcatd off",3)
-        self.execute_command("chkconfig --level 2345 conserver off",3)
-        self.execute_command("chkconfig --level 2345 dhcpd off",3)
-        self.execute_command("chkconfig postgresql off",3)
-        self.execute_command("service conserver start",3)
-        self.execute_command("service dhcpd start",3)
-        self.execute_command("service named start",3)
-        self.execute_command("service xcatd start",3)
-        start_db="service "+dbtype+" start"
-        self.execute_command(start_db,3)
-        self.execute_command("service ntpd restart",3)
-        self.change_hostname(host_name,args.vip)
-        self.configure_shared_data(args.path, shared_fs)
-        self.configure_vip(vip, nic)
+        try:
+            global setup_process_msg
+            setup_process_msg="Activate stage"
+            self.log_info(setup_process_msg)
+            self.vip_check(vip)
+            self.configure_vip(vip, nic, mask)
+            restore_host_name=self.get_hostname_for_ip(vip)
+            if host_name:
+                self.change_hostname(restore_host_name,vip)
+            else:
+                logger.info("Error: Can not find the hostname to set")
+            self.check_xcat_exist_in_shared_data(path)
+            self.configure_shared_data(path, shared_fs)
+            self.execute_command("chkconfig --level 345 xcatd off",3)
+            self.execute_command("chkconfig --level 2345 conserver off",3)
+            self.execute_command("chkconfig --level 2345 dhcpd off",3)
+            self.execute_command("chkconfig postgresql off",3)
+            self.execute_command("service conserver start",3)
+            self.execute_command("service dhcpd start",3)
+            self.execute_command("service named start",3)
+            self.execute_command("service xcatd start",3)
+            start_db="service "+dbtype+" start"
+            self.execute_command(start_db,3)
+            self.execute_command("service ntpd restart",3)
+        except:
+            raise HaException("Error: "+setup_process_msg)
  
     def xcatha_setup_mn(self, args):
         """setup_mn process"""
@@ -512,12 +534,12 @@ def parse_arguments():
     group.add_argument('-a', '--activate', help="activate node to be xCAT MN", action='store_true')
     group.add_argument('-d', '--deactivate', help="deactivate node to be xCAT MN", action='store_true')
 
-    parser.add_argument('-p', dest="path", required=True, help="shared data directory path")
+    parser.add_argument('-p', dest="path", help="shared data directory path")
     parser.add_argument('-v', dest="virtual_ip", required=True, help="virtual IP")
     parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
-    parser.add_argument('-n', dest="host_name", required=True, help="virtual IP hostname")
-    parser.add_argument('-m', dest="netmask", default="255.255.255.0", help="virtual IP network mask")
-    parser.add_argument('-t', dest="dbtype", default="sqlite", choices=['postgresql', 'sqlite'], help="database type")
+    parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
+    parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
+    parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite'], help="database type")
     args = parser.parse_args()
     return args
 
@@ -526,19 +548,16 @@ def main():
     obj=xcat_ha_utils()
     try:
         if args.activate:
-            if args.path:
-                logger.error("Option -p is not valid for xCAT MN deactivation")
-                return
+            if not args.path:
+                logger.error("Option -p is required for xCAT MN activation")
+                return 1
             if not args.netmask:
                 args.netmask="255.255.255.0"
             if not args.dbtype:
                 args.dbtype="sqlite"
-            if not args.host_name:
-                logger.error("Argument -n is required")
-                return
 
             obj.log_info("Activating this node as xCAT MN")
-            obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.host_name, args.netmask)
+            obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
 
         if args.deactivate:
             if args.dbtype:
@@ -550,6 +569,9 @@ def main():
             if args.host_name:
                 logger.error("Option -n is not valid for xCAT MN deactivation")
                 return 1
+            if args.path:
+                logger.error("Option -p is not valid for xCAT MN deactivation")
+                return 1
 
             obj.log_info("Deactivating this node as xCAT MN")
             dbtype=obj.current_database_type("")
@@ -560,6 +582,12 @@ def main():
                 args.netmask="255.255.255.0"
             if not args.dbtype:
                 args.dbtype="sqlite"
+            if not args.host_name:
+                logger.error("Option -n is required for xCAT HA setup")
+                return 1
+            if not args.path:
+                logger.error("Option -p is required for xCAT MN setup")
+                return 1
             res=obj.xcatha_setup_mn(args)
             if res:
                 
