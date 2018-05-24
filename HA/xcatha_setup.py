@@ -5,9 +5,9 @@
 # -*- coding: utf-8 -*-
 #  CHANGE HISTORY:
 #   
-#  NAME:  xcatha-setup.py
+#  NAME:  xcatha_setup.py
 #
-#  SYNTAX: xcatha-setup.py -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>] 
+#  SYNTAX: xcatha_setup.py -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] 
 #
 #  DESCRIPTION:  Setup this node be the shared data based xCAT MN
 #
@@ -16,9 +16,9 @@
 #               -i      the nic that the virtual ip address attaches to,
 #                       for Linux, it could be eth0:1 or eth1:2 or ...
 #               -v      virtual ip address
+#               -n      virtual ip hostname
 #               -m      netmask for the virtual ip address,
 #                       default to 255.255.255.0
-#               -n      virtual ip hostname, default ?
 #               -t      target database type, it can be postgresql, default is sqlite
 import argparse
 import os
