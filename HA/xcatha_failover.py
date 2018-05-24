@@ -5,10 +5,10 @@
 # -*- coding: utf-8 -*-
 #  CHANGE HISTORY:
 #   
-#  NAME:  xcatha-failover.py
+#  NAME:  xcatha_failover.py
 #
-#  SYNTAX: xcatha-failover.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>] 
-#  SYNTAX: xcatha-failover.py -d|--deactivate -i <nic> -v <virtual ip>
+#  SYNTAX: xcatha_failover.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>] 
+#  SYNTAX: xcatha_failover.py -d|--deactivate -i <nic> -v <virtual ip>
 #
 #  DESCRIPTION:  Activate/Deactivate this node to be the shared data based xCAT MN
 #
