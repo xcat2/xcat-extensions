@@ -2,8 +2,6 @@
 ###############################################################################
 # IBM(c) 2018 EPL license http://www.eclipse.org/legal/epl-v10.html
 ###############################################################################
-# -*- coding: utf-8 -*-
-#  CHANGE HISTORY:
 #   
 #  NAME:  xcatha.py
 #
@@ -34,11 +32,12 @@ from subprocess import Popen, PIPE
 import pdb
 
 xcat_url="https://raw.githubusercontent.com/xcat2/xcat-core/master/xCAT-server/share/xcat/tools/go-xcat"
-shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql','/tftpboot']
+shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql/data','/tftpboot']
 xcat_cfgloc="/etc/xcat/cfgloc"
 xcat_install="/tmp/go-xcat --yes install"
 xcatdb_password="XCATPGPW=cluster"
 setup_process_msg=""
+service_list=['postgresql','mysql','xcatd','named','dhcpd','ntpd','conserver','goconserver']
 
 #configure logger
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -49,6 +48,31 @@ console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logger = logging.getLogger('xCAT-HA')
 logger.addHandler(console_handler)
 
+def run_command(cmd, retry):
+    """execute and retry execute command"""
+    loginfo="Running "+cmd
+    logger.info(loginfo)
+    a=0
+    while True:
+        res=os.system(cmd)
+        if res is 0:
+            loginfo=cmd+" [passed]"
+            logger.info(cmd)
+            return 0
+        else:
+            if retry is 0:
+                loginfo=cmd+" [Failed]"
+                logger.error(loginfo)
+                return 1
+            a += 1
+            if a < retry:
+                time.sleep(3)
+                loginfo="Retry "+bytes(a)+" ... ..."+cmd
+                logger.info(loginfo)
+            if a==3:
+                loginfo=cmd+" [Failed]"
+                logger.error(loginfo)
+                return 1
 
 class HaException(Exception):
     """customize exception"""
@@ -79,31 +103,63 @@ class xcat_ha_utils:
             message="virtual ip can be used."
             logger.info(message)
 
-    def execute_command(self, cmd, retry):
-        """execute and retry execute command"""
-        loginfo="Running "+cmd
-        logger.info(loginfo)
-        a=0
-        while True:
-            res=os.system(cmd)
-            if res is 0:
-                loginfo=cmd+" [passed]"
-                logger.info(cmd)
-                return 0
+    def stop_service(self, serviceName):
+        """"""
+        cmd="systemctl stop "+serviceName
+        return_code=run_command(cmd, 3)
+        return return_code
+
+    def start_service(serviceName):
+        """"""
+        cmd="systemctl start "+serviceName
+        return_code=run_command(cmd,3)
+        return return_code
+
+    def disable_service(self, serviceName):
+        """"""
+        cmd="systemctl disable "+serviceName
+        return_code=run_command(cmd, 3)
+        return return_code
+
+    def start_all_services(self, servicelist, dbtype):
+        """"""
+        if dbtype == 'mysql':
+            servicelist.remove('postgresql')
+        elif dbtype == 'postgresql':
+            servicelist.remove('mysql')
+        return_code=0
+        for value in servicelist:
+            if value == 'conserver':
+                if run_command("makeconservercf", 0):
+                    return_code=1
+            if value == 'named':
+                if run_command("makedns -n", 0):
+                    return_code=1
+            if value == "dhcpd":
+                if run_command("makedhcp -n", 0):
+                    return_code=1
+                if run_command("makedhcp -a", 0):
+                    return_code=1
             else:
-                if retry is 0:
-                    loginfo=cmd+" [Failed]"
-                    logger.error(loginfo)
-                    return 1
-                a += 1
-                if a < retry:
-                    time.sleep(3)
-                    loginfo="Retry "+bytes(a)+" ... ..."+cmd
-                    logger.info(loginfo)       
-            if a==3:
-                loginfo=cmd+" [Failed]"
-                logger.error(loginfo)
-                return 1
+                if start_service(value):
+                    return_code=1
+        return return_code
+
+    def stop_all_services(self, servicelist,dbtype):
+        """"""
+        return_code=0
+        for value in reversed(servicelist):
+            if stop_service(value):
+                return_code=1
+        return return_code
+
+    def disable_all_services(self, servicelist):
+        """"""
+        return_code=0
+        for value in reversed(servicelist):
+            if disable_service(value):
+                return_code=1
+        return return_code
 
     def configure_xcat_attribute(self, host, ip):
         "configure xcat MN attribute"
@@ -192,7 +248,7 @@ class xcat_ha_utils:
             self.log_info(setup_process_msg)
             if dbtype == "postgresql":
                 cmd="export "+xcatdb_password+";pgsqlsetup -i -a "+vip+" -a "+physical_ip
-                res=self.execute_command(cmd,0)
+                res=run_command(cmd,0)
                 if res is 0:
                     logger.info("Switch to "+dbtype+" [Passed]")
                 else:
@@ -208,7 +264,7 @@ class xcat_ha_utils:
         os_name=platform.platform()
         if os_name.__contains__("redhat") and dbtype== "postgresql":  
             cmd="yum -y install postgresql* perl-DBD-Pg"
-            res=self.execute_command(cmd,0)
+            res=run_command(cmd,0)
             if res is not 0:
                 logger.error("install postgresql* perl-DBD-Pg  package [Failed]")
             else:
@@ -221,19 +277,19 @@ class xcat_ha_utils:
         setup_process_msg="Install xCAT stage"
         self.log_info(setup_process_msg)
         cmd="wget "+url+" -O - >/tmp/go-xcat"
-        res=self.execute_command(cmd,0)
+        res=run_command(cmd,0)
         if res is 0:
             cmd="chmod +x /tmp/go-xcat"
-            res=self.execute_command(cmd,0)
+            res=run_command(cmd,0)
             if res is 0:
                 cmd=xcat_install
-                res=self.execute_command(cmd,0)
+                res=run_command(cmd,0)
                 if res is 0:
                     print "xCAT is installed [Passed]"
                     xcat_env="/opt/xcat/bin:/opt/xcat/sbin:/opt/xcat/share/xcat/tools:"
                     os.environ["PATH"]=xcat_env+os.environ["PATH"]
                     cmd="lsxcatd -v"
-                    self.execute_command(cmd,0)
+                    run_command(cmd,0)
                     return 1
                 else:
                     logger.error("xCAT is installed [Failed]")
@@ -249,11 +305,11 @@ class xcat_ha_utils:
         setup_process_msg="Start configure virtual ip as alias ip stage"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" "+vip+" "+" netmask "+mask
-        res=self.execute_command(cmd,0)
+        res=run_command(cmd,0)
         if res is 0:
             message="configure virtual IP [passed]."
             logger.info(message)
-        else :
+        else:
             message="Error: configure virtual IP [failed]."
             logger.error(message) 
             raise HaException("Error: "+setup_process_msg)
@@ -262,8 +318,9 @@ class xcat_ha_utils:
         self.log_info(msg)
         name_server="nameserver "+vip
         resolv_file="/etc/resolv.conf"
+        
         res=self.find_line(resolv_file, name_server)
-        if res is 0:
+        if res is 1:
             resolvefile=open(resolv_file,'a')
             print name_server
             resolvefile.write(name_server)
@@ -292,7 +349,7 @@ class xcat_ha_utils:
             hostfile.write(ip_and_host)
             hostfile.close()
         cmd="hostname "+host
-        res=self.execute_command(cmd,0)
+        res=run_command(cmd,0)
         if res is 0:
             logger.info(cmd+" [Passed]")
         else:
@@ -304,9 +361,9 @@ class xcat_ha_utils:
         setup_process_msg="remove virtual ip"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" 0.0.0.0 0.0.0.0 &>/dev/null"
-        res=self.execute_command(cmd,0)
+        res=run_command(cmd,0)
         cmd="ip addr show |grep "+vip+" &>/dev/null"
-        res=self.execute_command(cmd,0)
+        res=run_command(cmd,0)
         if res is 0:
             logger.errer("remove virtual IP [Failed]")
             raise HaException("Error: "+setup_process_msg)
@@ -319,17 +376,17 @@ class xcat_ha_utils:
         setup_process_msg="Check "+service_name+" service status"
         self.log_info(setup_process_msg)
         cmd="systemctl status "+service_name+" > /dev/null"
-        status =self.execute_command(cmd,0)
+        status =run_command(cmd,0)
         return status
 
     def finditem(self, n, server):
         """add item into policy table"""
         index=bytes(n)
         cmd="lsdef -t policy |grep 1."+index
-        res=self.execute_command(cmd,0)
+        res=run_command(cmd,0)
         if res is not 0:
             cmd="chdef -t policy 1."+index+" name="+server+" rule=trusted"
-            res=self.execute_command(cmd,0)
+            res=run_command(cmd,0)
             if res is 0:
                 loginfo="'"+cmd+"' [Passed]"
                 logger.info(loginfo)
@@ -358,7 +415,7 @@ class xcat_ha_utils:
                     break
         if server:
             cmd="lsdef -t policy -i name|grep "+server
-            res=self.execute_command(cmd,0)
+            res=run_command(cmd,0)
             if res is not 0:
                 res=self.finditem(3,server)
                 if res is 0:
@@ -373,26 +430,13 @@ class xcat_ha_utils:
         return 1       
 
     def copy_files(self, sourceDir, targetDir):  
-        print sourceDir  
-        for f in os.listdir(sourceDir):  
-            sourceF = os.path.join(sourceDir, f)  
-            targetF = os.path.join(targetDir, f)  
+        print sourceDir 
+        if not os.path.exists(targetDir):
+            os.makedirs(targetDir)
+        cmd = 'rsync -alx %s %s/' %(sourceDir, targetDir)
+        return_code=run_command(cmd)
+        return return_code
                 
-            if os.path.isfile(sourceF):  
-                #create dir 
-                if not os.path.exists(targetDir):  
-                    os.makedirs(targetDir)  
-              
-                #if file does not exist, or size is different, overwrite
-                if not os.path.exists(targetF) or (os.path.exists(targetF) and (os.path.getsize(targetF) != os.path.getsize(sourceF))):  
-                    #binary
-                    open(targetF, "wb").write(open(sourceF, "rb").read())  
-                    print u"%s copy complete" %(targetF)  
-                else:  
-                    print u"%s existed, do not copy it" %(targetF)  
-            if os.path.isdir(sourceF):  
-                self.copy_files(sourceF, targetF)
-
 
     def configure_shared_data(self, path, sharedfs):
         """configure shared data directory"""
@@ -461,17 +505,17 @@ class xcat_ha_utils:
             logger.info("Error: Can not restore original hostname")
         self.unconfigure_vip(vip, nic)
         self.unconfigure_shared_data(shared_fs)
-        self.execute_command("chkconfig --level 345 xcatd off",3)
-        self.execute_command("chkconfig --level 2345 conserver off",3)
-        self.execute_command("chkconfig --level 2345 dhcpd off",3)
-        self.execute_command("chkconfig postgresql off",3)
-        self.execute_command("service conserver stop",3)
-        self.execute_command("service dhcpd stop",3)
-        self.execute_command("service named stop",3)
-        self.execute_command("service xcatd stop",3)
+        run_command("chkconfig --level 345 xcatd off",3)
+        run_command("chkconfig --level 2345 conserver off",3)
+        run_command("chkconfig --level 2345 dhcpd off",3)
+        run_command("chkconfig postgresql off",3)
+        run_command("service conserver stop",3)
+        run_command("service dhcpd stop",3)
+        run_command("service named stop",3)
+        run_command("service xcatd stop",3)
         stop_db="service "+dbtype+" stop"
-        self.execute_command(stop_db,3)
-        self.execute_command("service ntpd restart",3)
+        run_command(stop_db,3)
+        run_command("service ntpd restart",3)
  
     def activate_management_node(self, nic, vip, dbtype, path, mask):
         """activate management node"""
@@ -482,23 +526,23 @@ class xcat_ha_utils:
             self.vip_check(vip)
             self.configure_vip(vip, nic, mask)
             restore_host_name=self.get_hostname_for_ip(vip)
-            if host_name:
+            if restore_host_name:
                 self.change_hostname(restore_host_name,vip)
             else:
                 logger.info("Error: Can not find the hostname to set")
             self.check_xcat_exist_in_shared_data(path)
             self.configure_shared_data(path, shared_fs)
-            self.execute_command("chkconfig --level 345 xcatd off",3)
-            self.execute_command("chkconfig --level 2345 conserver off",3)
-            self.execute_command("chkconfig --level 2345 dhcpd off",3)
-            self.execute_command("chkconfig postgresql off",3)
-            self.execute_command("service conserver start",3)
-            self.execute_command("service dhcpd start",3)
-            self.execute_command("service named start",3)
-            self.execute_command("service xcatd start",3)
+            run_command("chkconfig --level 345 xcatd off",3)
+            run_command("chkconfig --level 2345 conserver off",3)
+            run_command("chkconfig --level 2345 dhcpd off",3)
+            run_command("chkconfig postgresql off",3)
+            run_command("service conserver start",3)
+            run_command("service dhcpd start",3)
+            run_command("service named start",3)
+            run_command("service xcatd start",3)
             start_db="service "+dbtype+" start"
-            self.execute_command(start_db,3)
-            self.execute_command("service ntpd restart",3)
+            run_command(start_db,3)
+            run_command("service ntpd restart",3)
         except:
             raise HaException("Error: "+setup_process_msg)
  
