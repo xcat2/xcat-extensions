@@ -21,7 +21,7 @@
 #               -n      virtual ip hostname
 #               -m      netmask for the virtual ip address,
 #                       default is 255.255.255.0
-#               -t      target database type, it can be postgresql or sqlite, default is sqlite
+#               -t      target database type, it can be postgresql, mysql or sqlite, default is sqlite
 import argparse
 import os
 import time
@@ -39,7 +39,7 @@ xcat_cfgloc="/etc/xcat/cfgloc"
 xcat_install="/tmp/go-xcat --yes install"
 xcatdb_password="XCATPGPW=cluster"
 setup_process_msg=""
-service_list=['postgresql','mysql','xcatd','named','dhcpd','ntpd','conserver','goconserver']
+service_list=['postgresql','mysqld','xcatd','named','dhcpd','ntpd','conserver','goconserver']
 
 #configure logger
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -50,7 +50,7 @@ console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logger = logging.getLogger('xCAT-HA')
 logger.addHandler(console_handler)
 
-def run_command(cmd, retry):
+def run_command(cmd, retry, ignore_fail=None):
     """execute and retry execute command"""
     loginfo="Running "+cmd
     logger.info(loginfo)
@@ -58,10 +58,15 @@ def run_command(cmd, retry):
     while True:
         res=os.system(cmd)
         if res is 0:
-            loginfo=cmd+" [passed]"
+            loginfo=cmd+" [Passed]"
             logger.info(cmd)
             return 0
         else:
+            # Command failed, but do we care ?
+            if ignore_fail:
+                loginfo=cmd+" [Failed, OK to ignore]"
+                logger.info(loginfo)
+                return 0
             if retry is 0:
                 loginfo=cmd+" [Failed]"
                 logger.error(loginfo)
@@ -90,7 +95,7 @@ class xcat_ha_utils:
         logger.info(message)
 
     def vip_check(self, vip):
-        """check if virtual ip can ping or not"""
+        """check if virtual ip can ping"""
         global setup_process_msg
         setup_process_msg="Check virtual ip stage"
         self.log_info(setup_process_msg)
@@ -106,19 +111,19 @@ class xcat_ha_utils:
             logger.info(message)
 
     def stop_service(self, serviceName):
-        """"""
+        """Stop specified service"""
         cmd="systemctl stop "+serviceName
         return_code=run_command(cmd, 3)
         return return_code
 
     def start_service(self, serviceName):
-        """"""
+        """Start specified service"""
         cmd="systemctl start "+serviceName
         return_code=run_command(cmd,3)
         return return_code
 
     def disable_service(self, serviceName):
-        """"""
+        """Disable specified service from starting on reboot"""
         cmd="systemctl disable "+serviceName
         return_code=run_command(cmd, 3)
         return return_code
@@ -132,6 +137,9 @@ class xcat_ha_utils:
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql':
             servicelist.remove('mysql')
+        elif dbtype == 'sqlite':
+            servicelist.remove('postgresql')
+            servicelist.remove('mysqld')
         process_file="/etc/xcat/console.lock"
         if os.path.exists(process_file):
             with open(process_file,'rt') as handle:
@@ -159,9 +167,9 @@ class xcat_ha_utils:
                     return_code=1
                 if run_command("makedhcp -a", 0):
                     return_code=1
-            if value == "xcatd" or value == "mysql" or value == "postgresql":
+            if value == "xcatd" or value == "mysqld" or value == "postgresql":
                 if self.start_service(value):
-                    logger.error("Error: start "+value+" falied") 
+                    logger.error("Error: start "+value+" failed") 
                     raise HaException("Error: "+setup_process_msg)
             else:
                 if self.start_service(value):
@@ -169,7 +177,7 @@ class xcat_ha_utils:
         return return_code
 
     def stop_all_services(self, servicelist, dbtype):
-        """"""
+        """stop all services"""
         if dbtype == 'mysql' and 'postgresql' in servicelist:
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql' and 'mysql' in servicelist:
@@ -188,11 +196,14 @@ class xcat_ha_utils:
         return return_code
 
     def disable_all_services(self, servicelist, dbtype):
-        """"""
+        """disable all services from starting on reboot"""
         if dbtype == 'mysql' and 'postgresql' in servicelist:
             servicelist.remove('postgresql')
-        elif dbtype == 'postgresql' and 'mysql' in servicelist:
-            servicelist.remove('mysql')
+        elif dbtype == 'postgresql' and 'mysqld' in servicelist:
+            servicelist.remove('mysqld')
+        elif dbtype == 'sqlite' and 'mysqld' in servicelist and 'postgresql' in servicelist:
+            servicelist.remove('postgresql')
+            servicelist.remove('mysqld')
         return_code=0
         for value in reversed(servicelist):
             if self.disable_service(value):
@@ -220,7 +231,7 @@ class xcat_ha_utils:
         return current_data_db
 
     def get_physical_ip(self, nic):
-        """get physical ip"""
+        """get physical IP"""
         main_nic=nic.split(":")[0]
         f=Popen(('ifconfig',main_nic), stdout=PIPE).stdout
         data=[eachLine.strip() for eachLine in f]
@@ -228,13 +239,13 @@ class xcat_ha_utils:
         return physical_ip 
 
     def check_database_type(self, dbtype, vip, nic):
-        """if current xcat DB type is different from target type, switch DB to target type"""
+        """if current xCAT DB type is different from target type, switch DB to target type"""
         global setup_process_msg
         setup_process_msg="Check database type stage"
         self.log_info(setup_process_msg)
         current_dbtype=self.current_database_type("")
-        logger.info("current xCAT database type: "+current_dbtype)
-        logger.info("target xCAT database type: "+dbtype)
+        logger.info("Current xCAT database type: "+current_dbtype)
+        logger.info("Target xCAT database type: "+dbtype)
         target_dbtype="dbengine=dbtype"
         if current_dbtype != target_dbtype:
             physical_ip=self.get_original_ip()
@@ -243,9 +254,9 @@ class xcat_ha_utils:
             self.switch_database(dbtype,vip,physical_ip)
 
     def check_xcat_exist_in_shared_data(self, path):
-        """check if xcat data is in shared data directory"""
+        """check if xCAT data is in shared data directory"""
         global setup_process_msg
-        setup_process_msg="check if xcat data is in shared data directory"
+        setup_process_msg="Check if xCAT data is in shared data directory"
         self.log_info(setup_process_msg)
         xcat_path=path+"/install"
         if os.path.exists(xcat_path):
@@ -272,9 +283,9 @@ class xcat_ha_utils:
                 share_data_db="postgresql"
         else:
             share_data_db="sqlite"
-        logger.info("database type is '"+share_data_db+"' in shared data directory")
+        logger.info("Database type is '"+share_data_db+"' in shared data directory")
         if share_data_db == tdbtype:
-            logger.info("target database type is matched [Passed]")
+            logger.info("Target database type is matched [Passed]")
         else:
             logger.error("Error: target database is not matched [Failed]")
             raise HaException("Error: "+setup_process_msg)
@@ -300,7 +311,7 @@ class xcat_ha_utils:
         """install database package"""
         global setup_process_msg
         setup_process_msg="Install database package stage"
-        self.log_info("Install database package ...")
+        self.log_info("Installing database package ...")
         os_name=platform.platform()
         if os_name.__contains__("redhat") and dbtype== "postgresql":  
             cmd="yum -y install postgresql* perl-DBD-Pg"
@@ -347,10 +358,10 @@ class xcat_ha_utils:
         cmd="ifconfig "+nic+" "+vip+" "+" netmask "+mask
         res=run_command(cmd,0)
         if res is 0:
-            message="configure virtual IP [passed]."
+            message="Configure virtual IP [Passed]."
             logger.info(message)
         else:
-            message="Error: configure virtual IP [failed]."
+            message="Error: configure virtual IP [Failed]."
             logger.error(message) 
             raise HaException("Error: "+setup_process_msg)
         #add virtual ip into /etc/resolve.conf
@@ -377,7 +388,7 @@ class xcat_ha_utils:
 
     def save_original_host_and_ip(self):
         """"""
-        self.log_info("save physical hostname and ip")
+        self.log_info("Save physical hostname and ip")
         hostfile="/etc/hosts"
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
@@ -429,17 +440,17 @@ class xcat_ha_utils:
     def unconfigure_vip(self, vip, nic):
         """remove vip from nic and /etc/resolve.conf"""
         global setup_process_msg
-        setup_process_msg="remove virtual ip"
+        setup_process_msg="Remove virtual IP"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" 0.0.0.0 0.0.0.0 &>/dev/null"
-        res=run_command(cmd,0)
+        res=run_command(cmd,0,1)
         cmd="ip addr show |grep "+vip+" &>/dev/null"
-        res=run_command(cmd,0)
+        res=run_command(cmd,0,1)
         if res is 0:
-            logger.errer("remove virtual IP [Failed]")
-            raise HaException("Error: "+setup_process_msg)
-        else:
             logger.info("Remove virtual IP [Passed]")
+        else:
+            logger.errer("Remove virtual IP [Failed]")
+            raise HaException("Error: "+setup_process_msg)
            
     def check_service_status(self, service_name):
         """check service status"""
@@ -492,17 +503,17 @@ class xcat_ha_utils:
                 if res is 0:
                     return 0
             else:
-                loginfo=server+" exist in policy table."
+                loginfo=server+" exists in policy table."
                 logger.info(loginfo)
                 return 0
         else:
-            loginfo="get server name "+server+" [Failed]" 
+            loginfo="Get server name "+server+" [Failed]" 
             logger.error(loginfo)
         return 1       
 
     def copy_files(self, sourceDir, targetDir):  
         """copy files"""
-        logger.info("copy "+sourceDir+" to "+targetDir) 
+        logger.info("Copy "+sourceDir+" to "+targetDir) 
         return_code=0
         if shutil.copytree(sourceDir,targetDir):
             return_code=1
@@ -536,10 +547,13 @@ class xcat_ha_utils:
         #create symlink 
         i=0
         while i < len(sharedfs):
-            logger.info("create symlink ..."+sharedfs[i])
+            logger.info("Creating symlink ..."+sharedfs[i])
             xcat_file_path=path+sharedfs[i]
             if not os.path.islink(sharedfs[i]):
                 if os.path.exists(sharedfs[i]):
+                    if os.path.exists(sharedfs[i]+".xcatbak"):
+                        # Remove backup if already there
+                        shutil.rmtree(sharedfs[i]+".xcatbak")
                     shutil.move(sharedfs[i], sharedfs[i]+".xcatbak")
                 os.symlink(xcat_file_path, sharedfs[i])     
             i += 1
@@ -555,7 +569,7 @@ class xcat_ha_utils:
         #2.unlink data in shared data directory
         i=0
         while i < len(sharedfs):
-            logger.info("removing symlink ..."+sharedfs[i])
+            logger.info("Removing symlink ..."+sharedfs[i])
             if os.path.islink(sharedfs[i]):
                 os.unlink(sharedfs[i])     
             i += 1
@@ -608,7 +622,7 @@ class xcat_ha_utils:
             logger.info("Restoring original hostname: " + restore_host_name)
             self.change_hostname(restore_host_name,restore_host_ip,"clean")
         else:
-            logger.info("Error: Can not restore original hostname")
+            logger.info("Warning: Can not restore original hostname")
         self.unconfigure_shared_data(shared_fs)
         self.unconfigure_vip(vip, nic)
 
@@ -624,7 +638,7 @@ class xcat_ha_utils:
             logger.info("Restoring original hostname: " + restore_host_name)
             self.change_hostname(restore_host_name,restore_host_ip)
         else:
-            logger.info("Error: Can not restore original hostname")
+            logger.info("Warning: Can not restore original hostname")
         self.unconfigure_vip(vip, nic)
         self.unconfigure_shared_data(shared_fs)
         self.disable_all_services(service_list, dbtype)
@@ -664,10 +678,10 @@ class xcat_ha_utils:
             self.check_database_type(args.dbtype,args.virtual_ip,args.nic)
             self.configure_shared_data(args.path, shared_fs)
             if self.check_service_status("xcatd") is not 0:
-                logger.error("xCAT service does not work well [Failed]")
+                logger.error("xCAT service did not start [Failed]")
                 raise HaException("Error: "+setup_process_msg)
             else:
-                logger.info("xCAT service works well [Passed]")
+                logger.info("xCAT service has started [Passed]")
             self.change_xcat_policy_attribute(args.nic, args.virtual_ip)
             self.deactivate_management_node(args.nic, args.virtual_ip, args.dbtype) 
             logger.info("This machine is set to standby management node successfully...")
@@ -687,7 +701,7 @@ def parse_arguments():
     parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
     parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
     parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
-    parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite'], help="database type")
+    parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mysql'], help="database type")
     args = parser.parse_args()
     return args
 
