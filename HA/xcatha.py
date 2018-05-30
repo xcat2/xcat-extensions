@@ -29,10 +29,12 @@ import platform
 import shutil
 import logging
 from subprocess import Popen, PIPE
+import pwd
+import grp
 import pdb
 
 xcat_url="https://raw.githubusercontent.com/xcat2/xcat-core/master/xCAT-server/share/xcat/tools/go-xcat"
-shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql/data','/tftpboot']
+shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql','/tftpboot']
 xcat_cfgloc="/etc/xcat/cfgloc"
 xcat_install="/tmp/go-xcat --yes install"
 xcatdb_password="XCATPGPW=cluster"
@@ -109,7 +111,7 @@ class xcat_ha_utils:
         return_code=run_command(cmd, 3)
         return return_code
 
-    def start_service(serviceName):
+    def start_service(self, serviceName):
         """"""
         cmd="systemctl start "+serviceName
         return_code=run_command(cmd,3)
@@ -122,15 +124,32 @@ class xcat_ha_utils:
         return return_code
 
     def start_all_services(self, servicelist, dbtype):
-        """"""
+        """start all services"""
+        global setup_process_msg
+        setup_process_msg="Start all services stage"
+        self.log_info(setup_process_msg)
         if dbtype == 'mysql':
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql':
             servicelist.remove('mysql')
+        process_file="/etc/xcat/console.lock"
+        if os.path.exists(process_file):
+            with open(process_file,'rt') as handle:
+                for ln in handle:
+                    if 'goconserver' in ln:
+                        servicelist.remove('conserver')
+                    else:
+                        servicelist.remove('goconserver')
+        else:
+            servicelist.remove('conserver')
+            servicelist.remove('goconserver')
         return_code=0
         for value in servicelist:
             if value == 'conserver':
                 if run_command("makeconservercf", 0):
+                    return_code=1
+            if value == 'goconserver':
+                if run_command("makegocons", 0):
                     return_code=1
             if value == 'named':
                 if run_command("makedns -n", 0):
@@ -140,24 +159,43 @@ class xcat_ha_utils:
                     return_code=1
                 if run_command("makedhcp -a", 0):
                     return_code=1
+            if value == "xcatd" or value == "mysql" or value == "postgresql":
+                if self.start_service(value):
+                    logger.error("Error: start "+value+" falied") 
+                    raise HaException("Error: "+setup_process_msg)
             else:
-                if start_service(value):
+                if self.start_service(value):
                     return_code=1
         return return_code
 
-    def stop_all_services(self, servicelist,dbtype):
+    def stop_all_services(self, servicelist, dbtype):
         """"""
+        if dbtype == 'mysql' and 'postgresql' in servicelist:
+            servicelist.remove('postgresql')
+        elif dbtype == 'postgresql' and 'mysql' in servicelist:
+            servicelist.remove('mysql')
+        cmd="ps -ef|grep 'conserver\|goconserver'|grep -v grep"
+        output=os.popen(cmd).read()
+        if output:
+            process="/etc/xcat/console.lock"
+            f=open(process, 'w') 
+            f.write(output)
+            f.close
         return_code=0
         for value in reversed(servicelist):
-            if stop_service(value):
+            if self.stop_service(value):
                 return_code=1
         return return_code
 
-    def disable_all_services(self, servicelist):
+    def disable_all_services(self, servicelist, dbtype):
         """"""
+        if dbtype == 'mysql' and 'postgresql' in servicelist:
+            servicelist.remove('postgresql')
+        elif dbtype == 'postgresql' and 'mysql' in servicelist:
+            servicelist.remove('mysql')
         return_code=0
         for value in reversed(servicelist):
-            if disable_service(value):
+            if self.disable_service(value):
                 return_code=1
         return return_code
 
@@ -199,7 +237,9 @@ class xcat_ha_utils:
         logger.info("target xCAT database type: "+dbtype)
         target_dbtype="dbengine=dbtype"
         if current_dbtype != target_dbtype:
-            physical_ip=self.get_physical_ip(nic)
+            physical_ip=self.get_original_ip()
+            if physical_ip is "":
+                physical_ip=self.get_physical_ip(nic)
             self.switch_database(dbtype,vip,physical_ip)
 
     def check_xcat_exist_in_shared_data(self, path):
@@ -320,7 +360,7 @@ class xcat_ha_utils:
         resolv_file="/etc/resolv.conf"
         
         res=self.find_line(resolv_file, name_server)
-        if res is 1:
+        if res is 0:
             resolvefile=open(resolv_file,'a')
             print name_server
             resolvefile.write(name_server)
@@ -331,10 +371,31 @@ class xcat_ha_utils:
         with open(filename,'r')as fp:
             list1 = fp.readlines()
             for line in list1:
-                line=line.rstrip('\n')
                 if keyword in line:
                     return 1
         return 0
+
+    def save_original_host_and_ip(self):
+        """"""
+        self.log_info("save physical hostname and ip")
+        hostfile="/etc/hosts"
+        physicalhost=self.get_hostname()
+        physicalip=self.get_ip_from_hostname()
+        physicalnet=physicalip+" "+physicalhost
+        res=self.find_line(hostfile, physicalnet)
+        if res is 0:
+            hostfile=open(hostfile,'a')
+            hostfile.write(physicalnet)
+            hostfile.close()
+        mnfile="/tmp/ha_mn"
+        if not os.path.exists(mnfile):
+            nfile = open(mnfile,'w')
+            nfile.close()
+        res=self.find_line(mnfile, physicalnet)
+        if res is 0:
+            mnfile=open(mnfile,'a')
+            mnfile.write(physicalnet+"\n")
+            mnfile.close()
  
     def change_hostname(self, host, ip):
         """change hostname"""
@@ -354,6 +415,16 @@ class xcat_ha_utils:
             logger.info(cmd+" [Passed]")
         else:
             logger.error(cmd+" [Failed]")
+
+    def get_hostname(self):
+        """get hostname"""
+        mhost=os.popen("hostname -s").read().strip() 
+        return mhost
+
+    def get_ip_from_hostname(self):
+        """get ip"""
+        ip=os.popen("hostname -i").read().strip()
+        return ip
 
     def unconfigure_vip(self, vip, nic):
         """remove vip from nic and /etc/resolve.conf"""
@@ -376,7 +447,7 @@ class xcat_ha_utils:
         setup_process_msg="Check "+service_name+" service status"
         self.log_info(setup_process_msg)
         cmd="systemctl status "+service_name+" > /dev/null"
-        status =run_command(cmd,0)
+        status =os.system(cmd)
         return status
 
     def finditem(self, n, server):
@@ -430,13 +501,20 @@ class xcat_ha_utils:
         return 1       
 
     def copy_files(self, sourceDir, targetDir):  
-        print sourceDir 
-        if not os.path.exists(targetDir):
-            os.makedirs(targetDir)
-        cmd = 'rsync -alx %s %s/' %(sourceDir, targetDir)
-        return_code=run_command(cmd)
-        return return_code
-                
+        """copy files"""
+        logger.info("copy "+sourceDir+" to "+targetDir) 
+        return_code=0
+        if shutil.copytree(sourceDir,targetDir):
+            return_code=1
+        stat_info = os.stat(sourceDir)
+        uid = stat_info.st_uid
+        gid = stat_info.st_gid
+        user = pwd.getpwuid(uid)[0]
+        group = grp.getgrgid(gid)[0]
+        cmd="chown -R "+user+":"+group+" "+targetDir
+        if run_command(cmd, 0):
+            return_code=1
+        return return_code              
 
     def configure_shared_data(self, path, sharedfs):
         """configure shared data directory"""
@@ -451,8 +529,8 @@ class xcat_ha_utils:
                 i = 0
                 while i < len(sharedfs):
                     xcat_file_path=path+sharedfs[i]
-                    if not os.path.exists(xcat_file_path):
-                        os.makedirs(xcat_file_path)
+                    #if not os.path.exists(xcat_file_path):
+                    #    os.makedirs(xcat_file_path)
                     self.copy_files(sharedfs[i],xcat_file_path)
                     i += 1  
         #create symlink 
@@ -465,6 +543,8 @@ class xcat_ha_utils:
                     shutil.move(sharedfs[i], sharedfs[i]+".xcatbak")
                 os.symlink(xcat_file_path, sharedfs[i])     
             i += 1
+        cmd="cp -f /tmp/ha_mn /etc/xcat/ha_mn"
+        run_command(cmd,0)
 
     def unconfigure_shared_data(self, sharedfs):
         """unconfigure shared data directory"""
@@ -484,9 +564,51 @@ class xcat_ha_utils:
         """get hostname for the passed in ip"""
         hostname=os.popen("getent hosts "+ip+" | awk -F ' ' '{print $2}' | uniq").read()
         return hostname
+
+    def get_hostname_original_ip(self):
+        """original hostname"""
+        host1=""
+        ha_mn=""
+        if os.path.exists("/etc/xcat/ha_mn"):
+            ha_mn="/etc/xcat/ha_mn"
+        elif os.path.exists("/tmp/ha_mn"):
+            ha_mn="/tmp/ha_mn"
+        if ha_mn is not "":
+            ips=os.popen("cat "+ha_mn+"|awk '{print $1}'").readlines()
+            for ip in ips:
+                nip=ip.strip()
+                cmd="ifconfig|grep "+nip
+                res=run_command(cmd,0)
+                if res is 0:
+                    cmd="cat "+ha_mn+"|grep "+nip+"|head -1"
+                    host1=os.popen(cmd).read().strip()
+        return host1
+    
+    def get_original_ip(self):
+        """"""
+        ip=""
+        ip_host=self.get_hostname_original_ip()
+        if ip_host:
+            ip=ip_host.split()[0]
+        return ip
+
+    def get_original_host(self):
+        """"""
+        host=""
+        ip_host=self.get_hostname_original_ip()
+        if host:
+            host=ip_host.split()[1]
+        return host
         
     def clean_env(self, vip, nic, host):
         """clean up env when exception happen"""
+        restore_host_name=self.get_original_host()
+        restore_host_ip=self.get_original_ip()
+        if restore_host_name and restore_host_ip:
+            logger.info("Restoring original hostname: " + restore_host_name)
+            self.change_hostname(restore_host_name,restore_host_ip,"clean")
+        else:
+            logger.info("Error: Can not restore original hostname")
         self.unconfigure_shared_data(shared_fs)
         self.unconfigure_vip(vip, nic)
 
@@ -496,26 +618,17 @@ class xcat_ha_utils:
         setup_process_msg="Deactivate stage"
         self.log_info(setup_process_msg)
         #MG How do we know which original IP was used ?
-        real_ip="1.2.3.4"
-        restore_host_name=self.get_hostname_for_ip(real_ip)
-        if restore_host_name:
+        restore_host_name=self.get_original_host()
+        restore_host_ip=self.get_original_ip()
+        if restore_host_name and restore_host_ip:
             logger.info("Restoring original hostname: " + restore_host_name)
-            self.change_hostname(restore_host_name,vip)
+            self.change_hostname(restore_host_name,restore_host_ip)
         else:
             logger.info("Error: Can not restore original hostname")
         self.unconfigure_vip(vip, nic)
         self.unconfigure_shared_data(shared_fs)
-        run_command("chkconfig --level 345 xcatd off",3)
-        run_command("chkconfig --level 2345 conserver off",3)
-        run_command("chkconfig --level 2345 dhcpd off",3)
-        run_command("chkconfig postgresql off",3)
-        run_command("service conserver stop",3)
-        run_command("service dhcpd stop",3)
-        run_command("service named stop",3)
-        run_command("service xcatd stop",3)
-        stop_db="service "+dbtype+" stop"
-        run_command(stop_db,3)
-        run_command("service ntpd restart",3)
+        self.disable_all_services(service_list, dbtype)
+        self.stop_all_services(service_list, dbtype)
  
     def activate_management_node(self, nic, vip, dbtype, path, mask):
         """activate management node"""
@@ -532,17 +645,7 @@ class xcat_ha_utils:
                 logger.info("Error: Can not find the hostname to set")
             self.check_xcat_exist_in_shared_data(path)
             self.configure_shared_data(path, shared_fs)
-            run_command("chkconfig --level 345 xcatd off",3)
-            run_command("chkconfig --level 2345 conserver off",3)
-            run_command("chkconfig --level 2345 dhcpd off",3)
-            run_command("chkconfig postgresql off",3)
-            run_command("service conserver start",3)
-            run_command("service dhcpd start",3)
-            run_command("service named start",3)
-            run_command("service xcatd start",3)
-            start_db="service "+dbtype+" start"
-            run_command(start_db,3)
-            run_command("service ntpd restart",3)
+            self.start_all_services(service_list, dbtype)
         except:
             raise HaException("Error: "+setup_process_msg)
  
@@ -554,6 +657,7 @@ class xcat_ha_utils:
                 self.check_shared_data_db_type(args.dbtype,args.path)
             if self.configure_vip(args.virtual_ip,args.nic,args.netmask):
                 return 1
+            self.save_original_host_and_ip()
             self.change_hostname(args.host_name,args.virtual_ip)
             if self.check_service_status("xcatd") is not 0:
                 self.install_xcat(xcat_url)
@@ -640,6 +744,7 @@ def main():
         logger.error(e.message)
         logger.error("Error encountered, starting to clean up the environment")
         obj.clean_env(args.virtual_ip, args.nic, args.host_name)
+        return 1
 
 if __name__ == "__main__":
     main()
