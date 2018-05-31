@@ -136,7 +136,7 @@ class xcat_ha_utils:
         if dbtype == 'mysql':
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql':
-            servicelist.remove('mysql')
+            servicelist.remove('mysqld')
         elif dbtype == 'sqlite':
             servicelist.remove('postgresql')
             servicelist.remove('mysqld')
@@ -299,7 +299,9 @@ class xcat_ha_utils:
             self.log_info(setup_process_msg)
             if dbtype == "postgresql":
                 cmd="export "+xcatdb_password+";pgsqlsetup -i -a "+vip+" -a "+physical_ip
-                res=run_command(cmd,0)
+                cmd_msg="export XCATPGPW=xxxxxx;pgsqlsetup -i -a "+vip+" -a "+physical_ip
+                logger.info(cmd_msg)
+                res=os.system(cmd)
                 if res is 0:
                     logger.info("Switch to "+dbtype+" [Passed]")
                 else:
@@ -379,10 +381,12 @@ class xcat_ha_utils:
 
     def find_line(self, filename, keyword):
         """find keyword from file"""
+        key=keyword.strip()
         with open(filename,'r')as fp:
             list1 = fp.readlines()
             for line in list1:
-                if keyword in line:
+                line=line.rstrip('\n')
+                if key in line:
                     return 1
         return 0
 
@@ -396,7 +400,7 @@ class xcat_ha_utils:
         res=self.find_line(hostfile, physicalnet)
         if res is 0:
             hostfile=open(hostfile,'a')
-            hostfile.write(physicalnet)
+            hostfile.write(physicalnet+"\n")
             hostfile.close()
         mnfile="/tmp/ha_mn"
         if not os.path.exists(mnfile):
@@ -418,7 +422,7 @@ class xcat_ha_utils:
         res=self.find_line(hostfile, ip_and_host)
         if res is 0:
             hostfile=open(hostfile,'a')
-            hostfile.write(ip_and_host)
+            hostfile.write(ip_and_host+"\n")
             hostfile.close()
         cmd="hostname "+host
         res=run_command(cmd,0)
@@ -540,8 +544,6 @@ class xcat_ha_utils:
                 i = 0
                 while i < len(sharedfs):
                     xcat_file_path=path+sharedfs[i]
-                    #if not os.path.exists(xcat_file_path):
-                    #    os.makedirs(xcat_file_path)
                     self.copy_files(sharedfs[i],xcat_file_path)
                     i += 1  
         #create symlink 
@@ -559,6 +561,24 @@ class xcat_ha_utils:
             i += 1
         cmd="cp -f /tmp/ha_mn /etc/xcat/ha_mn"
         run_command(cmd,0)
+
+    def modify_db_configure_file(self, dbtype, dbpath, physical_ip, vip):
+        """"""
+        if dbtype == 'postgresql':
+            dbfile=dbpath+"/var/lib/pgsql/data/pg_hba.conf"
+            if os.path.exists(dbfile):
+                res=self.find_line(dbfile, physical_ip)
+                if res is 0:
+                    addline="host    all          all        "+physical_ip+"/32      md5"
+                    dbfile1=open(dbfile,'a')
+                    dbfile1.write(addline)
+                    dbfile1.close()
+                res=self.find_line(dbfile, vip)
+                if res is 0:
+                    addline="host    all          all        "+vip+"/32      md5"
+                    dbfile1=open(dbfile,'a')
+                    dbfile1.write(addline)
+                    dbfile1.close()
 
     def unconfigure_shared_data(self, sharedfs):
         """unconfigure shared data directory"""
@@ -591,11 +611,12 @@ class xcat_ha_utils:
             ips=os.popen("cat "+ha_mn+"|awk '{print $1}'").readlines()
             for ip in ips:
                 nip=ip.strip()
-                cmd="ifconfig|grep "+nip
+                cmd='ifconfig|grep "inet '+nip+'  netmask"'
                 res=run_command(cmd,0)
                 if res is 0:
                     cmd="cat "+ha_mn+"|grep "+nip+"|head -1"
                     host1=os.popen(cmd).read().strip()
+                    break
         return host1
     
     def get_original_ip(self):
@@ -610,7 +631,7 @@ class xcat_ha_utils:
         """"""
         host=""
         ip_host=self.get_hostname_original_ip()
-        if host:
+        if ip_host:
             host=ip_host.split()[1]
         return host
         
@@ -620,7 +641,7 @@ class xcat_ha_utils:
         restore_host_ip=self.get_original_ip()
         if restore_host_name and restore_host_ip:
             logger.info("Restoring original hostname: " + restore_host_name)
-            self.change_hostname(restore_host_name,restore_host_ip,"clean")
+            self.change_hostname(restore_host_name,restore_host_ip)
         else:
             logger.info("Warning: Can not restore original hostname")
         self.unconfigure_shared_data(shared_fs)
@@ -676,6 +697,9 @@ class xcat_ha_utils:
             if self.check_service_status("xcatd") is not 0:
                 self.install_xcat(xcat_url)
             self.check_database_type(args.dbtype,args.virtual_ip,args.nic)
+            physical_ip=self.get_original_ip()
+            if physical_ip:
+                self.modify_db_configure_file(args.dbtype, args.path, physical_ip, args.virtual_ip)
             self.configure_shared_data(args.path, shared_fs)
             if self.check_service_status("xcatd") is not 0:
                 logger.error("xCAT service did not start [Failed]")
