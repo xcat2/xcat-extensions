@@ -559,8 +559,9 @@ class xcat_ha_utils:
                     shutil.move(sharedfs[i], sharedfs[i]+".xcatbak")
                 os.symlink(xcat_file_path, sharedfs[i])     
             i += 1
-        cmd="cp -f /tmp/ha_mn /etc/xcat/ha_mn"
-        run_command(cmd,0)
+        if os.path.exists("/tmp/ha_mn"):
+            cmd="cat /tmp/ha_mn >> /etc/xcat/ha_mn"
+            run_command(cmd,0)
 
     def modify_db_configure_file(self, dbtype, dbpath, physical_ip, vip):
         """"""
