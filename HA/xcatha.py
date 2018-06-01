@@ -31,6 +31,7 @@ import logging
 from subprocess import Popen, PIPE
 import pwd
 import grp
+import socket
 import pdb
 
 xcat_url="https://raw.githubusercontent.com/xcat2/xcat-core/master/xCAT-server/share/xcat/tools/go-xcat"
@@ -40,6 +41,9 @@ xcat_install="/tmp/go-xcat --yes install"
 xcatdb_password="XCATPGPW=cluster"
 setup_process_msg=""
 service_list=['postgresql','mysqld','xcatd','named','dhcpd','ntpd','conserver','goconserver']
+xcat_profile="/etc/profile.d/xcat.sh"
+pg_hba_conf="/var/lib/pgsql/data/pg_hba.conf"
+postgresql_conf="/var/lib/pgsql/data/postgresql.conf"
 
 #configure logger
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -122,6 +126,12 @@ class xcat_ha_utils:
         return_code=run_command(cmd,3)
         return return_code
 
+    def restart_service(self, serviceName):
+        """restart specified service"""
+        cmd="systemctl restart "+serviceName
+        return_code=run_command(cmd,3)
+        return return_code
+
     def disable_service(self, serviceName):
         """Disable specified service from starting on reboot"""
         cmd="systemctl disable "+serviceName
@@ -152,25 +162,36 @@ class xcat_ha_utils:
             servicelist.remove('conserver')
             servicelist.remove('goconserver')
         return_code=0
+        xcat_status=1
         for value in servicelist:
-            if value == 'conserver':
-                if run_command("makeconservercf", 0):
-                    return_code=1
-            if value == 'goconserver':
-                if run_command("makegocons", 0):
-                    return_code=1
-            if value == 'named':
-                if run_command("makedns -n", 0):
-                    return_code=1
-            if value == "dhcpd":
-                if run_command("makedhcp -n", 0):
-                    return_code=1
-                if run_command("makedhcp -a", 0):
-                    return_code=1
+            if xcat_status is 0:
+                if value == 'conserver':
+                    if run_command("makeconservercf", 0):
+                        return_code=1
+                if value == 'goconserver':
+                    if run_command("makegocons", 0):
+                        return_code=1
+                if value == 'named':
+                    cmd="lsdef -t site -i domain|grep domain"
+                    if run_command(cmd,0) is 0:
+                        if run_command("makedns -n", 0, 1):
+                            return_code=1
+                        else:
+                            logger.info("Warning: there is no domain in site.")
+                if value == "dhcpd":
+                    if run_command("makedhcp -n", 0):
+                        return_code=1
+                    if run_command("makedhcp -a", 0):
+                        return_code=1
             if value == "xcatd" or value == "mysqld" or value == "postgresql":
                 if self.start_service(value):
                     logger.error("Error: start "+value+" failed") 
                     raise HaException("Error: "+setup_process_msg)
+                else:
+                    if value == "xcatd":
+                        self.source_xcat_profile()
+                        xcat_status=0
+               
             else:
                 if self.start_service(value):
                     return_code=1
@@ -238,7 +259,7 @@ class xcat_ha_utils:
         physical_ip=filter(lambda x : 'inet ' in x, data)[0].split(" ")[1]
         return physical_ip 
 
-    def check_database_type(self, dbtype, vip, nic):
+    def check_database_type(self, dbtype, vip, nic, path):
         """if current xCAT DB type is different from target type, switch DB to target type"""
         global setup_process_msg
         setup_process_msg="Check database type stage"
@@ -251,7 +272,13 @@ class xcat_ha_utils:
             physical_ip=self.get_original_ip()
             if physical_ip is "":
                 physical_ip=self.get_physical_ip(nic)
-            self.switch_database(dbtype,vip,physical_ip)
+            if physical_ip:
+                if self.check_xcat_exist_in_shared_data(path):
+                    self.install_db_package(dbtype)
+                    self.modify_db_configure_file(dbtype, path, physical_ip, vip) 
+                else:
+                    self.switch_database(dbtype,vip,physical_ip)
+                    self.modify_db_configure_file(dbtype, path, physical_ip, vip)
 
     def check_xcat_exist_in_shared_data(self, path):
         """check if xCAT data is in shared data directory"""
@@ -433,12 +460,13 @@ class xcat_ha_utils:
 
     def get_hostname(self):
         """get hostname"""
-        mhost=os.popen("hostname -s").read().strip() 
+        mhost=socket.gethostname()
         return mhost
 
     def get_ip_from_hostname(self):
         """get ip"""
-        ip=os.popen("hostname -i").read().strip()
+        hostname=self.get_hostname()
+        ip=socket.gethostbyname(hostname)
         return ip
 
     def unconfigure_vip(self, vip, nic):
@@ -566,7 +594,7 @@ class xcat_ha_utils:
     def modify_db_configure_file(self, dbtype, dbpath, physical_ip, vip):
         """"""
         if dbtype == 'postgresql':
-            dbfile=dbpath+"/var/lib/pgsql/data/pg_hba.conf"
+            dbfile=dbpath+pg_hba_conf
             if os.path.exists(dbfile):
                 res=self.find_line(dbfile, physical_ip)
                 if res is 0:
@@ -580,6 +608,26 @@ class xcat_ha_utils:
                     dbfile1=open(dbfile,'a')
                     dbfile1.write(addline)
                     dbfile1.close()
+            postgre_file=dbpath+postgresql_conf
+            if os.path.exists(postgre_file):
+                listen_addr_line=os.popen("cat "+postgre_file+"|grep ^listen_addresses").readline()
+                listen_addr=listen_addr_line.split("'")[1]
+                cmd="echo "+listen_addr+"|grep -w "+vip
+                res=os.system(cmd)
+                replace=0
+                if res:
+                    listen_addr=listen_addr+","+vip
+                    replace=1
+                cmd="echo "+listen_addr+"|grep -w "+physical_ip
+                res=os.system(cmd)
+                if res:
+                    listen_addr=listen_addr+","+physical_ip
+                    replace=1
+                if replace:
+                    cmd="sed -i '/^listen_addresses =/d' "+postgre_file
+                    res=run_command(cmd,0)
+                    cmd="echo \"listen_addresses = '%s'\" >> %s" % (listen_addr,postgre_file)
+                    res=run_command(cmd,0)
 
     def unconfigure_shared_data(self, sharedfs):
         """unconfigure shared data directory"""
@@ -665,7 +713,13 @@ class xcat_ha_utils:
         self.unconfigure_shared_data(shared_fs)
         self.disable_all_services(service_list, dbtype)
         self.stop_all_services(service_list, dbtype)
- 
+        logger.info("This machine is set to standby management node successfully...")
+
+    def source_xcat_profile(self):
+        """source xcat profile"""
+        xcat_env="/opt/xcat/bin:/opt/xcat/sbin:/opt/xcat/share/xcat/tools:"
+        os.environ["PATH"]=xcat_env+os.environ["PATH"]
+
     def activate_management_node(self, nic, vip, dbtype, path, mask):
         """activate management node"""
         try:
@@ -682,6 +736,7 @@ class xcat_ha_utils:
             self.check_xcat_exist_in_shared_data(path)
             self.configure_shared_data(path, shared_fs)
             self.start_all_services(service_list, dbtype)
+            logger.info("This machine is set to primary management node successfully...")
         except:
             raise HaException("Error: "+setup_process_msg)
  
@@ -697,19 +752,22 @@ class xcat_ha_utils:
             self.change_hostname(args.host_name,args.virtual_ip)
             if self.check_service_status("xcatd") is not 0:
                 self.install_xcat(xcat_url)
-            self.check_database_type(args.dbtype,args.virtual_ip,args.nic)
-            physical_ip=self.get_original_ip()
-            if physical_ip:
-                self.modify_db_configure_file(args.dbtype, args.path, physical_ip, args.virtual_ip)
+            self.check_database_type(args.dbtype,args.virtual_ip,args.nic,args.path)
             self.configure_shared_data(args.path, shared_fs)
+            if args.dbtype == 'postgresql':
+                res=self.restart_service("postgresql")
+                if res:
+                    logger.error("Postgresql service did not start [Failed]") 
+                else:
+                    logger.info("Postgresql service restart [Passed]")
             if self.check_service_status("xcatd") is not 0:
-                logger.error("xCAT service did not start [Failed]")
-                raise HaException("Error: "+setup_process_msg)
-            else:
-                logger.info("xCAT service has started [Passed]")
+                res=self.restart_service("xcatd")
+                if res:
+                    logger.error("xCAT service did not start [Failed]")
+                    raise HaException("Error: "+setup_process_msg)
+            logger.info("xCAT service has started [Passed]")
             self.change_xcat_policy_attribute(args.nic, args.virtual_ip)
             self.deactivate_management_node(args.nic, args.virtual_ip, args.dbtype) 
-            logger.info("This machine is set to standby management node successfully...")
         except:
             raise HaException("Error: "+setup_process_msg)
 
@@ -720,7 +778,6 @@ def parse_arguments():
     group.add_argument('-s', '--setup', help="setup node to be xCAT MN", action='store_true')
     group.add_argument('-a', '--activate', help="activate node to be xCAT MN", action='store_true')
     group.add_argument('-d', '--deactivate', help="deactivate node to be xCAT MN", action='store_true')
-
     parser.add_argument('-p', dest="path", help="shared data directory path")
     parser.add_argument('-v', dest="virtual_ip", required=True, help="virtual IP")
     parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
@@ -777,7 +834,6 @@ def main():
                 return 1
             res=obj.xcatha_setup_mn(args)
             if res:
-                
                 obj.clean_env(args.virtual_ip, args.nic, args.host_name)            
     except HaException,e:
         logger.error(e.message)
