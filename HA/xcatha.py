@@ -138,9 +138,10 @@ class xcat_ha_utils:
         return_code=run_command(cmd, 3)
         return return_code
 
-    def start_all_services(self, servicelist, dbtype):
+    def start_all_services(self, servicelist, dbtype, host_name):
         """start all services"""
         global setup_process_msg
+        hostfile="/etc/hosts"
         setup_process_msg="Start all services stage"
         self.log_info(setup_process_msg)
         if dbtype == 'mysql':
@@ -163,6 +164,7 @@ class xcat_ha_utils:
             servicelist.remove('goconserver')
         return_code=0
         xcat_status=1
+        run_named=1
         for value in servicelist:
             if xcat_status is 0:
                 if value == 'conserver':
@@ -173,11 +175,31 @@ class xcat_ha_utils:
                         return_code=1
                 if value == 'named':
                     cmd="lsdef -t site -i domain|grep domain"
-                    if run_command(cmd,0) is 0:
-                        if run_command("makedns -n", 0, 1):
-                            return_code=1
+                    if run_command(cmd,0) is 1:
+                        # No domain in the site table, 
+                        #   check if long hosname is in /etc/hosts
+                        res1 = self.find_line(hostfile, host_name, 1)
+                        res2 = self.find_line(hostfile, host_name+'.')
+                        if res1 is 0 and res2 is 0:
+                            # Neither short nor long names in /etc/hosts
+                            if run_command("makedns -n", 0, 1):
+                                return_code=1
                         else:
-                            logger.info("Warning: there is no domain in site.")
+                            # One of the short or long names are in /etc/hosts
+                            logger.info("Warning: Either short or long hostnames are in /etc/hosts file when domain is not specified in site table.")
+                            run_named=0
+
+                    else:
+                        # Domain in the site table, 
+                        #   Verify both long and short hosname is in /etc/hosts
+                        res1 = self.find_line(hostfile, host_name, 1)
+                        res2 = self.find_line(hostfile, host_name+'.')
+                        if res1 is 1 and res2 is 1:
+                            # Both short and long names in /etc/hosts
+                            if run_command("makedns -n", 0, 1):
+                                return_code=1
+                        else:
+                            run_named=0
                 if value == "dhcpd":
                     if run_command("makedhcp -n", 0):
                         return_code=1
@@ -193,6 +215,9 @@ class xcat_ha_utils:
                         xcat_status=0
                
             else:
+                if value == "named" and run_named is 0:
+                    # Do not start named service
+                    continue
                 if self.start_service(value):
                     return_code=1
         return return_code
@@ -406,21 +431,27 @@ class xcat_ha_utils:
             resolvefile.write(name_server)
             resolvefile.close()
 
-    def find_line(self, filename, keyword):
+    def find_line(self, filename, keyword, exact_match=None):
         """find keyword from file"""
         key=keyword.strip()
         with open(filename,'r')as fp:
             list1 = fp.readlines()
             for line in list1:
                 line=line.rstrip('\n')
-                if key in line:
-                    return 1
+                if exact_match:
+                    # Need to match line exactly, not just substring
+                    if key == line:
+                        return 1
+                else:
+                    # Substring match
+                    if key in line:
+                        return 1
         return 0
 
     def save_original_host_and_ip(self):
         """"""
+        global hostfile
         self.log_info("Save physical hostname and ip")
-        hostfile="/etc/hosts"
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
         physicalnet=physicalip+" "+physicalhost
@@ -442,15 +473,25 @@ class xcat_ha_utils:
     def change_hostname(self, host, ip):
         """change hostname"""
         global setup_process_msg
+        hostfile="/etc/hosts"
         setup_process_msg="Start configure hostname stage"
         self.log_info(setup_process_msg)
         ip_and_host=ip+" "+host
-        hostfile="/etc/hosts"
         res=self.find_line(hostfile, ip_and_host)
         if res is 0:
             hostfile=open(hostfile,'a')
             hostfile.write(ip_and_host+"\n")
             hostfile.close()
+        # Check if host is a long hostname.
+        if '.' in host:
+            # Passed in hostname is a long format.
+            # Add short name to hostfile also
+            ip_and_host=ip+" "+host.split('.',1)[0]
+            res=self.find_line(hostfile, ip_and_host, 1)
+            if res is 0:
+                hostfile=open(hostfile,'a')
+                hostfile.write(ip_and_host+"\n")
+                hostfile.close()
         cmd="hostname "+host
         res=run_command(cmd,0)
         if res is 0:
@@ -701,7 +742,6 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="Deactivate stage"
         self.log_info(setup_process_msg)
-        #MG How do we know which original IP was used ?
         restore_host_name=self.get_original_host()
         restore_host_ip=self.get_original_ip()
         if restore_host_name and restore_host_ip:
@@ -735,7 +775,7 @@ class xcat_ha_utils:
                 logger.info("Error: Can not find the hostname to set")
             self.check_xcat_exist_in_shared_data(path)
             self.configure_shared_data(path, shared_fs)
-            self.start_all_services(service_list, dbtype)
+            self.start_all_services(service_list, dbtype, restore_host_name)
             logger.info("This machine is set to primary management node successfully...")
         except:
             raise HaException("Error: "+setup_process_msg)
@@ -799,6 +839,9 @@ def main():
                 args.netmask="255.255.255.0"
             if not args.dbtype:
                 args.dbtype="sqlite"
+            if args.host_name:
+                logger.error("Option -n is not valid for xCAT MN activation")
+                return 1
 
             obj.log_info("Activating this node as xCAT MN")
             obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
