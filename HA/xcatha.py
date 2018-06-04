@@ -5,23 +5,24 @@
 #   
 #  NAME:  xcatha.py
 #
-#  SYNTAX: xcatha.py -s|--setup -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] 
+#  SYNTAX: xcatha.py -s|--setup -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] [--dryrun] 
 #
-#  SYNTAX: xcatha.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>]
+#  SYNTAX: xcatha.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>] [--dryrun]
 #
-#  SYNTAX: xcatha.py -d|--deactivate -i <nic> -v <virtual ip>
+#  SYNTAX: xcatha.py -d|--deactivate -i <nic> -v <virtual ip> [--dryrun]
 #
 #  DESCRIPTION:  Setup/Activate/Deactivate this node be the shared data based xCAT MN
 #
 #  FLAGS:
-#               -p      the shared data directory path
-#               -i      the nic that the virtual ip address attaches to,
-#                       for Linux, it could be eth0:1 or eth1:2 or ...
-#               -v      virtual ip address
-#               -n      virtual ip hostname
-#               -m      netmask for the virtual ip address,
-#                       default is 255.255.255.0
-#               -t      target database type, it can be postgresql, mysql or sqlite, default is sqlite
+#               -p       the shared data directory path
+#               -i       the nic that the virtual ip address attaches to,
+#                        for Linux, it could be eth0:1 or eth1:2 or ...
+#               -v       virtual ip address
+#               -n       virtual ip hostname
+#               -m       netmask for the virtual ip address,
+#                        default is 255.255.255.0
+#               -t       target database type, it can be postgresql, mysql or sqlite, default is sqlite
+#               --dryrun display steps without execution
 import argparse
 import os
 import time
@@ -44,7 +45,7 @@ service_list=['postgresql','mysqld','xcatd','named','dhcpd','ntpd','conserver','
 xcat_profile="/etc/profile.d/xcat.sh"
 pg_hba_conf="/var/lib/pgsql/data/pg_hba.conf"
 postgresql_conf="/var/lib/pgsql/data/postgresql.conf"
-hostfile="/etc/hosts"
+dryrun=0
 
 #configure logger
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -57,14 +58,17 @@ logger.addHandler(console_handler)
 
 def run_command(cmd, retry, ignore_fail=None):
     """execute and retry execute command"""
-    loginfo="Running "+cmd
-    logger.info(loginfo)
+    global dryrun
+    if dryrun:
+        loginfo=cmd+" [Dryrun]"
+        logger.info(loginfo)
+        return 0
     a=0
     while True:
         res=os.system(cmd)
         if res is 0:
             loginfo=cmd+" [Passed]"
-            logger.info(cmd)
+            logger.info(loginfo)
             return 0
         else:
             # Command failed, but do we care ?
@@ -451,7 +455,6 @@ class xcat_ha_utils:
 
     def save_original_host_and_ip(self):
         """"""
-        global hostfile
         hostfile="/etc/hosts"
         self.log_info("Save physical hostname and ip")
         physicalhost=self.get_hostname()
@@ -496,10 +499,6 @@ class xcat_ha_utils:
                 hostfile.close()
         cmd="hostname "+host
         res=run_command(cmd,0)
-        if res is 0:
-            logger.info(cmd+" [Passed]")
-        else:
-            logger.error(cmd+" [Failed]")
 
     def get_hostname(self):
         """get hostname"""
@@ -515,12 +514,15 @@ class xcat_ha_utils:
     def unconfigure_vip(self, vip, nic):
         """remove vip from nic and /etc/resolve.conf"""
         global setup_process_msg
-        setup_process_msg="Remove virtual IP"
+        global dryrun
+        setup_process_msg="Remove virtual IP stage"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" 0.0.0.0 0.0.0.0 &>/dev/null"
         res=run_command(cmd,0,1)
         cmd="ip addr show |grep "+vip+" &>/dev/null"
         res=run_command(cmd,0,1)
+        if dryrun is 1:
+            return # For dryrun just exit, there is no passed or failed
         if res is 0:
             logger.info("Remove virtual IP [Passed]")
         else:
@@ -732,10 +734,9 @@ class xcat_ha_utils:
         restore_host_name=self.get_original_host()
         restore_host_ip=self.get_original_ip()
         if restore_host_name and restore_host_ip:
-            logger.info("Restoring original hostname: " + restore_host_name)
             self.change_hostname(restore_host_name,restore_host_ip)
         else:
-            logger.info("Warning: Can not restore original hostname")
+            logger.info("Warning: Unable to restore original hostname")
         self.unconfigure_shared_data(shared_fs)
         self.unconfigure_vip(vip, nic)
 
@@ -826,10 +827,12 @@ def parse_arguments():
     parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
     parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
     parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mysql'], help="database type")
+    parser.add_argument('--dryrun', action="store_true", help="display steps without execution")
     args = parser.parse_args()
     return args
 
 def main():
+    global dryrun
     args=parse_arguments()
     obj=xcat_ha_utils()
     try:
@@ -864,6 +867,8 @@ def main():
 
             obj.log_info("Deactivating this node as xCAT MN")
             dbtype=obj.current_database_type("")
+            if args.dryrun:
+                dryrun = 1
             obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
 
         if args.setup:
