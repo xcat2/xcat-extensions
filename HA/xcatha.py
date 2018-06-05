@@ -462,11 +462,11 @@ class xcat_ha_utils:
 
     def save_original_host_and_ip(self):
         """"""
+        global etc_hosts
         self.log_info("Save physical hostname and ip")
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
         physicalnet=physicalip+" "+physicalhost
-        global etc_hosts
         res=self.find_line(etc_hosts, physicalnet)
         if res is 0:
             hostfile=open(etc_hosts,'a')
