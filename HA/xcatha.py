@@ -35,15 +35,17 @@ import socket
 import pdb
 
 xcat_url="https://raw.githubusercontent.com/xcat2/xcat-core/master/xCAT-server/share/xcat/tools/go-xcat"
-shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql','/tftpboot']
+shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql','/var/lib/mysql','/tftpboot']
 xcat_cfgloc="/etc/xcat/cfgloc"
 xcat_install="/tmp/go-xcat --yes install"
-xcatdb_password="XCATPGPW=cluster"
+xcatdb_password={'XCATPGPW':'cluster','XCATMYSQLADMIN_PW':'cluster','XCATMYSQLROOT_PW':'cluster'}
 setup_process_msg=""
 service_list=['postgresql','mysqld','xcatd','named','dhcpd','ntpd','conserver','goconserver']
 xcat_profile="/etc/profile.d/xcat.sh"
 pg_hba_conf="/var/lib/pgsql/data/pg_hba.conf"
 postgresql_conf="/var/lib/pgsql/data/postgresql.conf"
+hostfile="/etc/hosts"
+xcat_env="/opt/xcat/bin:/opt/xcat/sbin:/opt/xcat/share/xcat/tools:"
 
 #configure logger
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -349,32 +351,56 @@ class xcat_ha_utils:
         if res is 0:
             setup_process_msg="Switch to target database stage"
             self.log_info(setup_process_msg)
-            if dbtype == "postgresql":
-                cmd="export "+xcatdb_password+";pgsqlsetup -i -a "+vip+" -a "+physical_ip
-                cmd_msg="export XCATPGPW=xxxxxx;pgsqlsetup -i -a "+vip+" -a "+physical_ip
-                logger.info(cmd_msg)
-                res=os.system(cmd)
-                if res is 0:
-                    logger.info("Switch to "+dbtype+" [Passed]")
+            for key in xcatdb_password:
+                os.environ[key]=xcatdb_password[key]
+            if self.check_service_status("xcatd") is not 0:
+                if self.start_service("xcatd"):  
+                    raise HaException("Error: "+setup_process_msg)   
                 else:
-                    logger.error("Switch to "+dbtype+" [Failed]")
+                    os.environ["PATH"]=xcat_env+os.environ["PATH"] 
+            if dbtype == "postgresql":
+                cmd="pgsqlsetup -i -a "+vip+" -a "+physical_ip
+                cmd_msg="export XCATPGPW=xxxxxx;pgsqlsetup -i -a "+vip+" -a "+physical_ip
+            elif dbtype == "mysql":
+                if os.path.exists("/tmp/ha_mn"):
+                    cmd="cat /tmp/ha_mn|awk '{print $1}'|head -1 >/tmp/physical_ip"
+                    os.system(cmd)
+                if os.path.exists("/tmp/physical_ip"):
+                    cmd="mysqlsetup -i -f /tmp/physical_ip"
+                else:
+                    logger.error("there is no physical ip file in /tmp/physical_ip"
+                    raise HaException("Error: "+setup_process_msg)    
             else:
-                logger.error("Do not support"+dbtype+" [Failed]")  
- 
+                logger.error("Do not support"+dbtype+" [Failed]") 
+                raise HaException("Error: "+setup_process_msg)
+            logger.info(cmd_msg)
+            res=os.system(cmd)
+            if res is 0:
+                logger.info("Switch to "+dbtype+" [Passed]")
+            else:
+                logger.error("Switch to "+dbtype+" [Failed]")
+
     def install_db_package(self, dbtype):
         """install database package"""
         global setup_process_msg
         setup_process_msg="Install database package stage"
         self.log_info("Installing database package ...")
         os_name=platform.platform()
-        if os_name.__contains__("redhat") and dbtype== "postgresql":  
-            cmd="yum -y install postgresql* perl-DBD-Pg"
+        res=1
+        if os_name.__contains__("redhat"):
+            if dbtype == "postgresql":  
+                db_rpms="postgresql* perl-DBD-Pg"
+            elif dbtype == "mysql":
+                db_rpms="perl-DBD-MySQL* mariadb-server-5.* mariadb-5.* mysql-connector-odbc-*"
+            else:
+                return res
+            cmd="yum -y install %s" %db_rpms
             res=run_command(cmd,0)
             if res is not 0:
-                logger.error("install postgresql* perl-DBD-Pg  package [Failed]")
+                logger.error("install %s [Failed]" %db_rpms)
             else:
-                logger.info("install postgresql* perl-DBD-Pg  package [Passed]")     
-            return res
+                logger.info("install %s [Passed]" %db_rpms)     
+        return res
 
     def install_xcat(self, url):
         """install stable xCAT"""
@@ -391,7 +417,6 @@ class xcat_ha_utils:
                 res=run_command(cmd,0)
                 if res is 0:
                     print "xCAT is installed [Passed]"
-                    xcat_env="/opt/xcat/bin:/opt/xcat/sbin:/opt/xcat/share/xcat/tools:"
                     os.environ["PATH"]=xcat_env+os.environ["PATH"]
                     cmd="lsxcatd -v"
                     run_command(cmd,0)
@@ -423,7 +448,6 @@ class xcat_ha_utils:
         self.log_info(msg)
         name_server="nameserver "+vip
         resolv_file="/etc/resolv.conf"
-        
         res=self.find_line(resolv_file, name_server)
         if res is 0:
             resolvefile=open(resolv_file,'a')
@@ -469,6 +493,9 @@ class xcat_ha_utils:
             mnfile=open(mnfile,'a')
             mnfile.write(physicalnet+"\n")
             mnfile.close()
+    def configure_nsswitch(self):
+        """change to files dns in /etc/nsswitch.conf"""
+        pass
  
     def change_hostname(self, host, ip):
         """change hostname"""
@@ -600,12 +627,16 @@ class xcat_ha_utils:
             return_code=1
         return return_code              
 
-    def configure_shared_data(self, path, sharedfs):
+    def configure_shared_data(self, path, sharedfs, dbtype):
         """configure shared data directory"""
         global setup_process_msg
         setup_process_msg="Configure shared data directory stage"
         self.log_info(setup_process_msg)
         #check if there is xcat data in shared data directory
+        if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
+            sharedfs.remove("/var/lib/mysql")
+        elif dbtype == 'mysql' and sharedfs.__contains__("/var/lib/pgsql"):
+            sharedfs.remove("/var/lib/pgsql")
         xcat_file_path=path+"/etc/xcat"
         if not os.path.exists(xcat_file_path):
             permision=oct(os.stat(path).st_mode)[-3:]           
@@ -670,11 +701,15 @@ class xcat_ha_utils:
                     cmd="echo \"listen_addresses = '%s'\" >> %s" % (listen_addr,postgre_file)
                     res=run_command(cmd,0)
 
-    def unconfigure_shared_data(self, sharedfs):
+    def unconfigure_shared_data(self, sharedfs, dbtype):
         """unconfigure shared data directory"""
         global setup_process_msg
         setup_process_msg="Unconfigure shared data directory stage"
         self.log_info(setup_process_msg)
+        if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
+            sharedfs.remove("/var/lib/mysql")
+        elif dbtype == 'mysql' and sharedfs.__contains__("/var/lib/pgsql"):
+            sharedfs.remove("/var/lib/pgsql")
         #1.check if there is xcat data in shared data directory
         #2.unlink data in shared data directory
         i=0
@@ -725,7 +760,7 @@ class xcat_ha_utils:
             host=ip_host.split()[1]
         return host
         
-    def clean_env(self, vip, nic, host):
+    def clean_env(self, vip, nic, host, dbtype):
         """clean up env when exception happen"""
         restore_host_name=self.get_original_host()
         restore_host_ip=self.get_original_ip()
@@ -734,7 +769,7 @@ class xcat_ha_utils:
             self.change_hostname(restore_host_name,restore_host_ip)
         else:
             logger.info("Warning: Can not restore original hostname")
-        self.unconfigure_shared_data(shared_fs)
+        self.unconfigure_shared_data(shared_fs,dbtype)
         self.unconfigure_vip(vip, nic)
 
     def deactivate_management_node(self, nic, vip, dbtype):
@@ -750,7 +785,7 @@ class xcat_ha_utils:
         else:
             logger.info("Warning: Can not restore original hostname")
         self.unconfigure_vip(vip, nic)
-        self.unconfigure_shared_data(shared_fs)
+        self.unconfigure_shared_data(shared_fs,dbtype)
         self.disable_all_services(service_list, dbtype)
         self.stop_all_services(service_list, dbtype)
         logger.info("This machine is set to standby management node successfully...")
@@ -774,7 +809,7 @@ class xcat_ha_utils:
             else:
                 logger.info("Error: Can not find the hostname to set")
             self.check_xcat_exist_in_shared_data(path)
-            self.configure_shared_data(path, shared_fs)
+            self.configure_shared_data(path, shared_fs, dbtype)
             self.start_all_services(service_list, dbtype, restore_host_name)
             logger.info("This machine is set to primary management node successfully...")
         except:
@@ -786,20 +821,22 @@ class xcat_ha_utils:
             self.vip_check(args.virtual_ip)
             if self.check_xcat_exist_in_shared_data(args.path):
                 self.check_shared_data_db_type(args.dbtype,args.path)
-            if self.configure_vip(args.virtual_ip,args.nic,args.netmask):
-                return 1
+            self.configure_vip(args.virtual_ip,args.nic,args.netmask)
             self.save_original_host_and_ip()
             self.change_hostname(args.host_name,args.virtual_ip)
             if self.check_service_status("xcatd") is not 0:
                 self.install_xcat(xcat_url)
             self.check_database_type(args.dbtype,args.virtual_ip,args.nic,args.path)
-            self.configure_shared_data(args.path, shared_fs)
-            if args.dbtype == 'postgresql':
-                res=self.restart_service("postgresql")
+            self.configure_shared_data(args.path, shared_fs, args.dbtype)
+            dbservice="postgresql"
+            if args.dbtype == 'mysql':
+                dbservice="mysqld"
+            if args.dbtype == 'postgresql' or args.dbtype == 'mysql':
+                res=self.restart_service(dbservice)
                 if res:
-                    logger.error("Postgresql service did not start [Failed]") 
+                    logger.error("%s service did not start [Failed]" %dbservice) 
                 else:
-                    logger.info("Postgresql service restart [Passed]")
+                    logger.info("%s service restart [Passed]" %dbservice)
             if self.check_service_status("xcatd") is not 0:
                 res=self.restart_service("xcatd")
                 if res:
@@ -843,7 +880,7 @@ def main():
                 logger.error("Option -n is not valid for xCAT MN activation")
                 return 1
 
-            obj.log_info("Activating this node as xCAT MN")
+            obj.log_info("Activating this node as xCAT primary MN")
             obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
 
         if args.deactivate:
@@ -860,7 +897,7 @@ def main():
                 logger.error("Option -p is not valid for xCAT MN deactivation")
                 return 1
 
-            obj.log_info("Deactivating this node as xCAT MN")
+            obj.log_info("Deactivating this node as xCAT standby MN")
             dbtype=obj.current_database_type("")
             obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
 
@@ -875,13 +912,14 @@ def main():
             if not args.path:
                 logger.error("Option -p is required for xCAT MN setup")
                 return 1
+            obj.log_info("Setup this node as xCAT HA standby MN")
             res=obj.xcatha_setup_mn(args)
             if res:
                 obj.clean_env(args.virtual_ip, args.nic, args.host_name)            
     except HaException,e:
         logger.error(e.message)
         logger.error("Error encountered, starting to clean up the environment")
-        obj.clean_env(args.virtual_ip, args.nic, args.host_name)
+        obj.clean_env(args.virtual_ip, args.nic, args.host_name, args.dbtype)
         return 1
 
 if __name__ == "__main__":
