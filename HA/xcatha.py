@@ -44,6 +44,7 @@ service_list=['postgresql','mysqld','xcatd','named','dhcpd','ntpd','conserver','
 xcat_profile="/etc/profile.d/xcat.sh"
 pg_hba_conf="/var/lib/pgsql/data/pg_hba.conf"
 postgresql_conf="/var/lib/pgsql/data/postgresql.conf"
+hostfile="/etc/hosts"
 
 #configure logger
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -451,6 +452,7 @@ class xcat_ha_utils:
     def save_original_host_and_ip(self):
         """"""
         global hostfile
+        hostfile="/etc/hosts"
         self.log_info("Save physical hostname and ip")
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
