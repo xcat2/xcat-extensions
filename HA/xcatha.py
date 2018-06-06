@@ -21,7 +21,7 @@
 #               -n       virtual ip hostname
 #               -m       netmask for the virtual ip address,
 #                        default is 255.255.255.0
-#               -t       target database type, it can be postgresql, mysql or sqlite, default is sqlite
+#               -t       target database type, it can be postgresql, mariadb or sqlite, default is sqlite
 #               --dryrun display steps without execution
 import argparse
 import os
@@ -43,7 +43,7 @@ xcat_cfgloc="/etc/xcat/cfgloc"
 xcat_install="/tmp/go-xcat --yes install"
 xcatdb_password={'XCATPGPW':'cluster','XCATMYSQLADMIN_PW':'cluster','XCATMYSQLROOT_PW':'cluster'}
 setup_process_msg=""
-service_list=['postgresql','mysqld','xcatd','named','dhcpd','ntpd','conserver','goconserver']
+service_list=['postgresql','mariadb','xcatd','named','dhcpd','ntpd','conserver','goconserver']
 xcat_profile="/etc/profile.d/xcat.sh"
 pg_hba_conf="/var/lib/pgsql/data/pg_hba.conf"
 postgresql_conf="/var/lib/pgsql/data/postgresql.conf"
@@ -156,13 +156,13 @@ class xcat_ha_utils:
         global etc_hosts
         setup_process_msg="Start all services stage"
         self.log_info(setup_process_msg)
-        if dbtype == 'mysql':
+        if dbtype == 'mariadb':
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql':
-            servicelist.remove('mysqld')
+            servicelist.remove('mariadb')
         elif dbtype == 'sqlite':
             servicelist.remove('postgresql')
-            servicelist.remove('mysqld')
+            servicelist.remove('mariadb')
         process_file="/etc/xcat/console.lock"
         if os.path.exists(process_file):
             with open(process_file,'rt') as handle:
@@ -213,7 +213,7 @@ class xcat_ha_utils:
                         return_code=1
                     if run_command("makedhcp -a", 0):
                         return_code=1
-            if value == "xcatd" or value == "mysqld" or value == "postgresql":
+            if value == "xcatd" or value == "mariadb" or value == "postgresql":
                 if self.start_service(value):
                     logger.error("Error: start "+value+" failed") 
                     raise HaException("Error: "+setup_process_msg)
@@ -239,10 +239,10 @@ class xcat_ha_utils:
 
     def stop_all_services(self, servicelist, dbtype):
         """stop all services"""
-        if dbtype == 'mysql' and 'postgresql' in servicelist:
+        if dbtype == 'mariadb' and 'postgresql' in servicelist:
             servicelist.remove('postgresql')
-        elif dbtype == 'postgresql' and 'mysql' in servicelist:
-            servicelist.remove('mysql')
+        elif dbtype == 'postgresql' and 'mariadb' in servicelist:
+            servicelist.remove('mariadb')
         cmd="ps -ef|grep 'conserver\|goconserver'|grep -v grep"
         output=os.popen(cmd).read()
         if output:
@@ -258,13 +258,13 @@ class xcat_ha_utils:
 
     def disable_all_services(self, servicelist, dbtype):
         """disable all services from starting on reboot"""
-        if dbtype == 'mysql' and 'postgresql' in servicelist:
+        if dbtype == 'mariadb' and 'postgresql' in servicelist:
             servicelist.remove('postgresql')
-        elif dbtype == 'postgresql' and 'mysqld' in servicelist:
-            servicelist.remove('mysqld')
-        elif dbtype == 'sqlite' and 'mysqld' in servicelist and 'postgresql' in servicelist:
+        elif dbtype == 'postgresql' and 'mariadb' in servicelist:
+            servicelist.remove('mariadb')
+        elif dbtype == 'sqlite' and 'mariadb' in servicelist and 'postgresql' in servicelist:
             servicelist.remove('postgresql')
-            servicelist.remove('mysqld')
+            servicelist.remove('mariadb')
         return_code=0
         for value in reversed(servicelist):
             if self.disable_service(value):
@@ -284,7 +284,7 @@ class xcat_ha_utils:
                 cdbtype=file.read(2)
             file.close()
             if cdbtype == 'my':
-                current_data_db="mysql"
+                current_data_db="mariadb"
             else:
                 current_data_db="postgresql"
         else:
@@ -330,7 +330,7 @@ class xcat_ha_utils:
             logger.info("There is xCAT data "+xcat_path+" in shared data "+path)
             return 1
         else:
-            logger.error("There is no xCAT data "+xcat_path+" in shared data "+path)
+            logger.info("There is no xCAT data "+xcat_path+" in shared data "+path)
             return 0
 
     def check_shared_data_db_type(self, tdbtype, path):
@@ -345,7 +345,7 @@ class xcat_ha_utils:
                 sdbtype=file.read(2)
             file.close()
             if sdbtype == 'my':
-                share_data_db="mysql"
+                share_data_db="mariadb"
             elif sdbtype == 'Pg':
                 share_data_db="postgresql"
         else:
@@ -364,24 +364,26 @@ class xcat_ha_utils:
         if res is 0:
             setup_process_msg="Switch to target database stage"
             self.log_info(setup_process_msg)
+            cmd_msg=""
             for key in xcatdb_password:
                 os.environ[key]=xcatdb_password[key]
             if self.check_service_status("xcatd") is not 0:
-                if self.start_service("xcatd"):  
+                if self.restart_service("xcatd"):  
                     raise HaException("Error: "+setup_process_msg)   
                 else:
-                    os.environ["PATH"]=xcat_env+os.environ["PATH"] 
+                    os.environ["PATH"]=xcat_env+os.environ["PATH"]
             if dbtype == "postgresql":
                 cmd="pgsqlsetup -i -a "+vip+" -a "+physical_ip
                 cmd_msg="export XCATPGPW=xxxxxx;pgsqlsetup -i -a "+vip+" -a "+physical_ip
-            elif dbtype == "mysql":
+            elif dbtype == "mariadb":
                 if os.path.exists("/tmp/ha_mn"):
                     cmd="cat /tmp/ha_mn|awk '{print $1}'|head -1 >/tmp/physical_ip"
                     os.system(cmd)
                 if os.path.exists("/tmp/physical_ip"):
-                    cmd="mysqlsetup -i -f /tmp/physical_ip"
+                    cmd="mysqlsetup -i -f /tmp/physical_ip -V"
+                    cmd_msg="mysqlsetup -i -f /tmp/physical_ip -V"
                 else:
-                    logger.error("there is no physical ip file in /tmp/physical_ip"
+                    logger.error("there is no physical ip file in /tmp/physical_ip")
                     raise HaException("Error: "+setup_process_msg)    
             else:
                 logger.error("Do not support"+dbtype+" [Failed]") 
@@ -403,7 +405,7 @@ class xcat_ha_utils:
         if os_name.__contains__("redhat"):
             if dbtype == "postgresql":  
                 db_rpms="postgresql* perl-DBD-Pg"
-            elif dbtype == "mysql":
+            elif dbtype == "mariadb":
                 db_rpms="perl-DBD-MySQL* mariadb-server-5.* mariadb-5.* mysql-connector-odbc-*"
             else:
                 return res
@@ -651,9 +653,11 @@ class xcat_ha_utils:
         #check if there is xcat data in shared data directory
         if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
             sharedfs.remove("/var/lib/mysql")
-        elif dbtype == 'mysql' and sharedfs.__contains__("/var/lib/pgsql"):
+        elif dbtype == 'mariadb' and sharedfs.__contains__("/var/lib/pgsql"):
             sharedfs.remove("/var/lib/pgsql")
+            self.stop_service("mariadb")
         xcat_file_path=path+"/etc/xcat"
+        self.stop_all_services(service_list, dbtype)
         if not os.path.exists(xcat_file_path):
             permision=oct(os.stat(path).st_mode)[-3:]           
             if permision == '755':
@@ -726,7 +730,7 @@ class xcat_ha_utils:
 
         if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
             sharedfs.remove("/var/lib/mysql")
-        elif dbtype == 'mysql' and sharedfs.__contains__("/var/lib/pgsql"):
+        elif dbtype == 'mariadb' and sharedfs.__contains__("/var/lib/pgsql"):
             sharedfs.remove("/var/lib/pgsql")
         #1.check if there is xcat data in shared data directory
         #2.unlink data in shared data directory
@@ -737,6 +741,9 @@ class xcat_ha_utils:
                 else:
                     logger.info("Removing symlink ..."+sharedfs_link)
                     os.unlink(sharedfs_link)
+                    logger.info("Restoring local directory ..."+sharedfs_link)
+                    if os.path.exists(sharedfs_link+".xcatbak") and not os.path.exists(sharedfs_link):
+                        shutil.move(sharedfs_link+".xcatbak", sharedfs_link)
 
     def get_hostname_for_ip(self,ip):
         """get hostname for the passed in ip"""
@@ -780,7 +787,7 @@ class xcat_ha_utils:
         return host
         
 
-    def clean_env(self, vip, nic, host, dbtype):
+    def clean_env(self, vip, nic, dbtype):
 
         """clean up env when exception happen"""
         restore_host_name=self.get_original_host()
@@ -803,6 +810,11 @@ class xcat_ha_utils:
         self.stop_all_services(service_list, dbtype)
         logger.info("This machine is set to standby management node successfully...")
 
+    def check_HA_directory(self, path):
+        """check if there is HA directory exist or not"""
+        if not os.path.exists(path):
+            raise HaException("Error:%s does not exist" %path) 
+
     def source_xcat_profile(self):
         """source xcat profile"""
         xcat_env="/opt/xcat/bin:/opt/xcat/sbin:/opt/xcat/share/xcat/tools:"
@@ -814,6 +826,7 @@ class xcat_ha_utils:
             global setup_process_msg
             setup_process_msg="Activate stage"
             self.log_info(setup_process_msg)
+            self.check_HA_directory(path)
             self.vip_check(vip)
             self.configure_vip(vip, nic, mask)
             restore_host_name=self.get_hostname_for_ip(vip)
@@ -831,6 +844,7 @@ class xcat_ha_utils:
     def xcatha_setup_mn(self, args):
         """setup_mn process"""
         try:
+            self.check_HA_directory(args.path) 
             self.vip_check(args.virtual_ip)
             if self.check_xcat_exist_in_shared_data(args.path):
                 self.check_shared_data_db_type(args.dbtype,args.path)
@@ -842,9 +856,9 @@ class xcat_ha_utils:
             self.check_database_type(args.dbtype,args.virtual_ip,args.nic,args.path)
             self.configure_shared_data(args.path, shared_fs, args.dbtype)
             dbservice="postgresql"
-            if args.dbtype == 'mysql':
-                dbservice="mysqld"
-            if args.dbtype == 'postgresql' or args.dbtype == 'mysql':
+            if args.dbtype == 'mariadb':
+                dbservice="mariadb"
+            if args.dbtype == 'postgresql' or args.dbtype == 'mariadb':
                 res=self.restart_service(dbservice)
                 if res:
                     logger.error("%s service did not start [Failed]" %dbservice) 
@@ -873,7 +887,7 @@ def parse_arguments():
     parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
     parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
     parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
-    parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mysql'], help="database type")
+    parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mariadb'], help="database type")
     parser.add_argument('--dryrun', action="store_true", help="display steps without execution")
     args = parser.parse_args()
     return args
