@@ -5,23 +5,24 @@
 #   
 #  NAME:  xcatha.py
 #
-#  SYNTAX: xcatha.py -s|--setup -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] 
+#  SYNTAX: xcatha.py -s|--setup -p <shared-data directory path> -i <nic> -v <virtual ip> -n <virtual ip hostname> [-m <netmask>] [-t <database type>] [--dryrun] 
 #
-#  SYNTAX: xcatha.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>]
+#  SYNTAX: xcatha.py -a|--activate -p <shared-data directory path> -i <nic> -v <virtual ip> [-m <netmask>] [-t <database type>] [--dryrun]
 #
-#  SYNTAX: xcatha.py -d|--deactivate -i <nic> -v <virtual ip>
+#  SYNTAX: xcatha.py -d|--deactivate -i <nic> -v <virtual ip> [--dryrun]
 #
 #  DESCRIPTION:  Setup/Activate/Deactivate this node be the shared data based xCAT MN
 #
 #  FLAGS:
-#               -p      the shared data directory path
-#               -i      the nic that the virtual ip address attaches to,
-#                       for Linux, it could be eth0:1 or eth1:2 or ...
-#               -v      virtual ip address
-#               -n      virtual ip hostname
-#               -m      netmask for the virtual ip address,
-#                       default is 255.255.255.0
-#               -t      target database type, it can be postgresql, mysql or sqlite, default is sqlite
+#               -p       the shared data directory path
+#               -i       the nic that the virtual ip address attaches to,
+#                        for Linux, it could be eth0:1 or eth1:2 or ...
+#               -v       virtual ip address
+#               -n       virtual ip hostname
+#               -m       netmask for the virtual ip address,
+#                        default is 255.255.255.0
+#               -t       target database type, it can be postgresql, mysql or sqlite, default is sqlite
+#               --dryrun display steps without execution
 import argparse
 import os
 import time
@@ -34,6 +35,8 @@ import grp
 import socket
 import pdb
 
+etc_hosts="/etc/hosts"
+dryrun=0
 xcat_url="https://raw.githubusercontent.com/xcat2/xcat-core/master/xCAT-server/share/xcat/tools/go-xcat"
 shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql','/var/lib/mysql','/tftpboot']
 xcat_cfgloc="/etc/xcat/cfgloc"
@@ -58,14 +61,17 @@ logger.addHandler(console_handler)
 
 def run_command(cmd, retry, ignore_fail=None):
     """execute and retry execute command"""
-    loginfo="Running "+cmd
-    logger.info(loginfo)
+    global dryrun
+    if dryrun:
+        loginfo=cmd+" [Dryrun]"
+        logger.info(loginfo)
+        return 0
     a=0
     while True:
         res=os.system(cmd)
         if res is 0:
             loginfo=cmd+" [Passed]"
-            logger.info(cmd)
+            logger.info(loginfo)
             return 0
         else:
             # Command failed, but do we care ?
@@ -103,9 +109,13 @@ class xcat_ha_utils:
     def vip_check(self, vip):
         """check if virtual ip can ping"""
         global setup_process_msg
+        global dryrun
         setup_process_msg="Check virtual ip stage"
         self.log_info(setup_process_msg)
         cmd="ping -c 1 -w 10 "+vip
+        if dryrun:
+            logger.info(cmd + " [Dryrun]")
+            return
         logger.info(cmd)
         res=os.system(cmd)
         if res is 0:
@@ -143,7 +153,7 @@ class xcat_ha_utils:
     def start_all_services(self, servicelist, dbtype, host_name):
         """start all services"""
         global setup_process_msg
-        hostfile="/etc/hosts"
+        global etc_hosts
         setup_process_msg="Start all services stage"
         self.log_info(setup_process_msg)
         if dbtype == 'mysql':
@@ -166,7 +176,7 @@ class xcat_ha_utils:
             servicelist.remove('goconserver')
         return_code=0
         xcat_status=1
-        run_named=1
+        domain_in_site=0
         for value in servicelist:
             if xcat_status is 0:
                 if value == 'conserver':
@@ -176,33 +186,29 @@ class xcat_ha_utils:
                     if run_command("makegocons", 0):
                         return_code=1
                 if value == 'named':
+                    # The decision to start "named" service is based on "domain" entry in "site" table
+                    # "domain" entry     in "site" table AND
+                    #      long hostname in "/etc/hosts" => run "makedns -n" which will in turn start "named"
+                    # "domain" entry not in "site" table => do not run "makedns -n" and do not start "named"
                     cmd="lsdef -t site -i domain|grep domain"
                     if run_command(cmd,0) is 1:
                         # No domain in the site table, 
-                        #   check if long hosname is in /etc/hosts
-                        res1 = self.find_line(hostfile, host_name, 1)
-                        res2 = self.find_line(hostfile, host_name+'.')
-                        if res1 is 0 and res2 is 0:
-                            # Neither short nor long names in /etc/hosts
-                            if run_command("makedns -n", 0, 1):
-                                return_code=1
-                        else:
-                            # One of the short or long names are in /etc/hosts
-                            logger.info("Warning: Either short or long hostnames are in /etc/hosts file when domain is not specified in site table.")
-                            run_named=0
-
+                        logger.warning('"domain" entry is not in "site" table. "named" service will not be started')
                     else:
                         # Domain in the site table, 
-                        #   Verify both long and short hosname is in /etc/hosts
-                        res1 = self.find_line(hostfile, host_name, 1)
-                        res2 = self.find_line(hostfile, host_name+'.')
-                        if res1 is 1 and res2 is 1:
-                            # Both short and long names in /etc/hosts
-                            if run_command("makedns -n", 0, 1):
+                        domain_in_site=1
+                        long_name = self.find_line(etc_hosts, host_name+'.')
+                        if long_name is 1:
+                            # long hostname in /etc/hosts
+                            if run_command("makedns -n", 0):
                                 return_code=1
                         else:
-                            run_named=0
+                            # long hostname not in /etc/hosts
+                            logger.warning('Long hostname is not in "/etc/hosts". "named" service will not be started')
                 if value == "dhcpd":
+                    if domain_in_site is 0:
+                        logger.warning('"domain" entry is not in "site" table. "dhcpd" service will not be started')
+                        continue
                     if run_command("makedhcp -n", 0):
                         return_code=1
                     if run_command("makedhcp -a", 0):
@@ -217,8 +223,15 @@ class xcat_ha_utils:
                         xcat_status=0
                
             else:
-                if value == "named" and run_named is 0:
-                    # Do not start named service
+                if value == "named" or value == "dhcpd":
+                    # Do not start "named" service,
+                    # Either it was started by "makedns -n" command above, or
+                    # "domain" entry is not in "site" table and we should not run "named"
+                    #
+                    # Do not start "dhcpd" service,
+                    # Either it was started by "makedhcp -a" command above, or
+                    # "domain" entry is not in "site" table and we should not run "makedhcp"
+                    #
                     continue
                 if self.start_service(value):
                     return_code=1
@@ -292,8 +305,8 @@ class xcat_ha_utils:
         setup_process_msg="Check database type stage"
         self.log_info(setup_process_msg)
         current_dbtype=self.current_database_type("")
-        logger.info("Current xCAT database type: "+current_dbtype)
-        logger.info("Target xCAT database type: "+dbtype)
+        logger.debug("Current xCAT database type: "+current_dbtype)
+        logger.debug("Target xCAT database type: "+dbtype)
         target_dbtype="dbengine=dbtype"
         if current_dbtype != target_dbtype:
             physical_ip=self.get_original_ip()
@@ -432,32 +445,31 @@ class xcat_ha_utils:
     def configure_vip(self, vip, nic, mask):
         """configure virtual ip"""
         global setup_process_msg
-        setup_process_msg="Start configure virtual ip as alias ip stage"
+        global dryrun
+        setup_process_msg="Configure virtual ip as alias ip stage"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" "+vip+" "+" netmask "+mask
         res=run_command(cmd,0)
-        if res is 0:
-            message="Configure virtual IP [Passed]."
-            logger.info(message)
-        else:
-            message="Error: configure virtual IP [Failed]."
-            logger.error(message) 
+        if res is 1:
             raise HaException("Error: "+setup_process_msg)
         #add virtual ip into /etc/resolve.conf
-        msg="add virtual ip "+vip+" into /etc/resolv.conf"
-        self.log_info(msg)
         name_server="nameserver "+vip
         resolv_file="/etc/resolv.conf"
         res=self.find_line(resolv_file, name_server)
         if res is 0:
             resolvefile=open(resolv_file,'a')
             print name_server
+            if dryrun:
+                self.log_info("Adding virtual ip "+vip+" into /etc/resolv.conf [Dryrun]")
+                resolvefile.close()
+                return
+            self.log_info("Adding virtual ip "+vip+" into /etc/resolv.conf")
             resolvefile.write(name_server)
-            resolvefile.close()
 
     def find_line(self, filename, keyword, exact_match=None):
         """find keyword from file"""
         key=keyword.strip()
+        logger.debug("Opening file " + filename + " to look for " + keyword)
         with open(filename,'r')as fp:
             list1 = fp.readlines()
             for line in list1:
@@ -474,14 +486,14 @@ class xcat_ha_utils:
 
     def save_original_host_and_ip(self):
         """"""
-        global hostfile
+        global etc_hosts
         self.log_info("Save physical hostname and ip")
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
         physicalnet=physicalip+" "+physicalhost
-        res=self.find_line(hostfile, physicalnet)
+        res=self.find_line(etc_hosts, physicalnet)
         if res is 0:
-            hostfile=open(hostfile,'a')
+            hostfile=open(etc_hosts,'a')
             hostfile.write(physicalnet+"\n")
             hostfile.close()
         mnfile="/tmp/ha_mn"
@@ -493,38 +505,34 @@ class xcat_ha_utils:
             mnfile=open(mnfile,'a')
             mnfile.write(physicalnet+"\n")
             mnfile.close()
-    def configure_nsswitch(self):
-        """change to files dns in /etc/nsswitch.conf"""
-        pass
- 
+                                 
     def change_hostname(self, host, ip):
         """change hostname"""
         global setup_process_msg
-        hostfile="/etc/hosts"
-        setup_process_msg="Start configure hostname stage"
+        global dryrun
+        global etc_hosts
+        setup_process_msg="Configure hostname stage for host " + host
         self.log_info(setup_process_msg)
         ip_and_host=ip+" "+host
-        res=self.find_line(hostfile, ip_and_host)
+        res=self.find_line(etc_hosts, ip_and_host)
         if res is 0:
-            hostfile=open(hostfile,'a')
-            hostfile.write(ip_and_host+"\n")
+            hostfile=open(etc_hosts,'a')
+            if not dryrun:
+                hostfile.write(ip_and_host+"\n")
             hostfile.close()
         # Check if host is a long hostname.
         if '.' in host:
             # Passed in hostname is a long format.
-            # Add short name to hostfile also
+            # Add short name to etc/hosts also
             ip_and_host=ip+" "+host.split('.',1)[0]
-            res=self.find_line(hostfile, ip_and_host, 1)
+            res=self.find_line(etc_hosts, ip_and_host, 1)
             if res is 0:
-                hostfile=open(hostfile,'a')
-                hostfile.write(ip_and_host+"\n")
+                hostfile=open(etc_hosts,'a')
+                if not dryrun:
+                    hostfile.write(ip_and_host+"\n")
                 hostfile.close()
-        cmd="hostname "+host
+        cmd="hostname "+host.strip()
         res=run_command(cmd,0)
-        if res is 0:
-            logger.info(cmd+" [Passed]")
-        else:
-            logger.error(cmd+" [Failed]")
 
     def get_hostname(self):
         """get hostname"""
@@ -540,12 +548,15 @@ class xcat_ha_utils:
     def unconfigure_vip(self, vip, nic):
         """remove vip from nic and /etc/resolve.conf"""
         global setup_process_msg
-        setup_process_msg="Remove virtual IP"
+        global dryrun
+        setup_process_msg="Remove virtual IP stage"
         self.log_info(setup_process_msg)
         cmd="ifconfig "+nic+" 0.0.0.0 0.0.0.0 &>/dev/null"
         res=run_command(cmd,0,1)
         cmd="ip addr show |grep "+vip+" &>/dev/null"
         res=run_command(cmd,0,1)
+        if dryrun is 1:
+            return # For dryrun just exit, there is no passed or failed
         if res is 0:
             logger.info("Remove virtual IP [Passed]")
         else:
@@ -604,7 +615,7 @@ class xcat_ha_utils:
                     return 0
             else:
                 loginfo=server+" exists in policy table."
-                logger.info(loginfo)
+                logger.debug(loginfo)
                 return 0
         else:
             loginfo="Get server name "+server+" [Failed]" 
@@ -613,8 +624,12 @@ class xcat_ha_utils:
 
     def copy_files(self, sourceDir, targetDir):  
         """copy files"""
-        logger.info("Copy "+sourceDir+" to "+targetDir) 
+        global dryrun
         return_code=0
+        if dryrun:
+            logger.info("Copy "+sourceDir+" to "+targetDir+" [Dryrun]")
+            return return_code
+        logger.info("Copy "+sourceDir+" to "+targetDir) 
         if shutil.copytree(sourceDir,targetDir):
             return_code=1
         stat_info = os.stat(sourceDir)
@@ -630,6 +645,7 @@ class xcat_ha_utils:
     def configure_shared_data(self, path, sharedfs, dbtype):
         """configure shared data directory"""
         global setup_process_msg
+        global dryrun
         setup_process_msg="Configure shared data directory stage"
         self.log_info(setup_process_msg)
         #check if there is xcat data in shared data directory
@@ -647,18 +663,19 @@ class xcat_ha_utils:
                     self.copy_files(sharedfs[i],xcat_file_path)
                     i += 1  
         #create symlink 
-        i=0
-        while i < len(sharedfs):
-            logger.info("Creating symlink ..."+sharedfs[i])
-            xcat_file_path=path+sharedfs[i]
-            if not os.path.islink(sharedfs[i]):
-                if os.path.exists(sharedfs[i]):
-                    if os.path.exists(sharedfs[i]+".xcatbak"):
+        for sharedfs_link in sharedfs:
+            if dryrun:
+                logger.info("Creating symlink ..."+sharedfs_link+ " [Dryrun]")
+                continue
+            logger.info("Creating symlink ..."+sharedfs_link)
+            xcat_file_path=path+sharedfs_link
+            if not os.path.islink(sharedfs_link):
+                if os.path.exists(sharedfs_link):
+                    if os.path.exists(sharedfs_link+".xcatbak"):
                         # Remove backup if already there
-                        shutil.rmtree(sharedfs[i]+".xcatbak")
-                    shutil.move(sharedfs[i], sharedfs[i]+".xcatbak")
-                os.symlink(xcat_file_path, sharedfs[i])     
-            i += 1
+                        shutil.rmtree(sharedfs_link+".xcatbak")
+                    shutil.move(sharedfs_link, sharedfs_link+".xcatbak")
+                os.symlink(xcat_file_path, sharedfs_link)     
         if os.path.exists("/tmp/ha_mn"):
             cmd="cat /tmp/ha_mn >> /etc/xcat/ha_mn"
             run_command(cmd,0)
@@ -706,18 +723,20 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="Unconfigure shared data directory stage"
         self.log_info(setup_process_msg)
+
         if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
             sharedfs.remove("/var/lib/mysql")
         elif dbtype == 'mysql' and sharedfs.__contains__("/var/lib/pgsql"):
             sharedfs.remove("/var/lib/pgsql")
         #1.check if there is xcat data in shared data directory
         #2.unlink data in shared data directory
-        i=0
-        while i < len(sharedfs):
-            logger.info("Removing symlink ..."+sharedfs[i])
-            if os.path.islink(sharedfs[i]):
-                os.unlink(sharedfs[i])     
-            i += 1
+        for sharedfs_link in sharedfs:
+            if os.path.islink(sharedfs_link):
+                if dryrun:
+                    logger.info("Removing symlink ..."+sharedfs_link+ " [Dryrun]")
+                else:
+                    logger.info("Removing symlink ..."+sharedfs_link)
+                    os.unlink(sharedfs_link)
 
     def get_hostname_for_ip(self,ip):
         """get hostname for the passed in ip"""
@@ -736,7 +755,7 @@ class xcat_ha_utils:
             ips=os.popen("cat "+ha_mn+"|awk '{print $1}'").readlines()
             for ip in ips:
                 nip=ip.strip()
-                cmd='ifconfig|grep "inet '+nip+'  netmask"'
+                cmd='ifconfig|grep "inet '+nip+'  netmask" > /dev/null'
                 res=run_command(cmd,0)
                 if res is 0:
                     cmd="cat "+ha_mn+"|grep "+nip+"|head -1"
@@ -760,15 +779,17 @@ class xcat_ha_utils:
             host=ip_host.split()[1]
         return host
         
+
     def clean_env(self, vip, nic, host, dbtype):
+
         """clean up env when exception happen"""
         restore_host_name=self.get_original_host()
         restore_host_ip=self.get_original_ip()
         if restore_host_name and restore_host_ip:
-            logger.info("Restoring original hostname: " + restore_host_name)
             self.change_hostname(restore_host_name,restore_host_ip)
         else:
-            logger.info("Warning: Can not restore original hostname")
+
+            logger.info("Warning: Unable to restore original hostname")
         self.unconfigure_shared_data(shared_fs,dbtype)
         self.unconfigure_vip(vip, nic)
 
@@ -777,15 +798,7 @@ class xcat_ha_utils:
         global setup_process_msg
         setup_process_msg="Deactivate stage"
         self.log_info(setup_process_msg)
-        restore_host_name=self.get_original_host()
-        restore_host_ip=self.get_original_ip()
-        if restore_host_name and restore_host_ip:
-            logger.info("Restoring original hostname: " + restore_host_name)
-            self.change_hostname(restore_host_name,restore_host_ip)
-        else:
-            logger.info("Warning: Can not restore original hostname")
-        self.unconfigure_vip(vip, nic)
-        self.unconfigure_shared_data(shared_fs,dbtype)
+        self.clean_env(vip, nic, dbtype)
         self.disable_all_services(service_list, dbtype)
         self.stop_all_services(service_list, dbtype)
         logger.info("This machine is set to standby management node successfully...")
@@ -861,12 +874,16 @@ def parse_arguments():
     parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
     parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
     parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mysql'], help="database type")
+    parser.add_argument('--dryrun', action="store_true", help="display steps without execution")
     args = parser.parse_args()
     return args
 
 def main():
+    global dryrun
     args=parse_arguments()
     obj=xcat_ha_utils()
+    if args.dryrun:
+        dryrun = 1
     try:
         if args.activate:
             if not args.path:
@@ -915,11 +932,11 @@ def main():
             obj.log_info("Setup this node as xCAT HA standby MN")
             res=obj.xcatha_setup_mn(args)
             if res:
-                obj.clean_env(args.virtual_ip, args.nic, args.host_name)            
+                obj.clean_env(args.virtual_ip, args.nic, args.dbtype)            
     except HaException,e:
         logger.error(e.message)
         logger.error("Error encountered, starting to clean up the environment")
-        obj.clean_env(args.virtual_ip, args.nic, args.host_name, args.dbtype)
+        obj.clean_env(args.virtual_ip, args.nic, args.dbtype)
         return 1
 
 if __name__ == "__main__":
