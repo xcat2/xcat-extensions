@@ -310,7 +310,7 @@ class xcat_ha_utils:
         current_dbtype=self.current_database_type("")
         logger.info("Current xCAT database type: "+current_dbtype)
         logger.info("Target xCAT database type: "+dbtype)
-        target_dbtype="dbengine=dbtype"
+        target_dbtype=dbtype
         if current_dbtype != target_dbtype:
             physical_ip=self.get_original_ip()
             if physical_ip is "":
@@ -322,6 +322,8 @@ class xcat_ha_utils:
                 else:
                     self.switch_database(dbtype,vip,physical_ip)
                     self.modify_db_configure_file(dbtype, path, physical_ip, vip)
+        else:
+            logger.info("No need to switch dataase")
 
     def check_xcat_exist_in_shared_data(self, path):
         """check if xCAT data is in shared data directory"""
