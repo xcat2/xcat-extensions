@@ -158,11 +158,11 @@ class xcat_ha_utils:
         setup_process_msg="Start all services stage"
         print "============================================================================================"
         logger.info(setup_process_msg)
-        if dbtype == 'mariadb':
+        if dbtype == 'mariadb' and 'postgresql' in servicelist:
             servicelist.remove('postgresql')
-        elif dbtype == 'postgresql':
+        elif dbtype == 'postgresql' and 'mariadb' in servicelist:
             servicelist.remove('mariadb')
-        elif dbtype == 'sqlite':
+        elif dbtype == 'sqlite' and 'postgresql' in servicelist and 'mariadb' in servicelist:
             servicelist.remove('postgresql')
             servicelist.remove('mariadb')
         process_file="/etc/xcat/console.lock"
@@ -412,6 +412,9 @@ class xcat_ha_utils:
         os_name=platform.platform()
         res=1
         if os_name.__contains__("redhat"):
+            if not self.check_software_installed(dbtype):
+                logger.info(dbtype+" existed")
+                return 0    
             if dbtype == "postgresql":  
                 db_rpms="postgresql* perl-DBD-Pg"
             elif dbtype == "mariadb":
@@ -432,6 +435,9 @@ class xcat_ha_utils:
         setup_process_msg="Install xCAT stage"
         print "============================================================================================"
         logger.info(setup_process_msg)
+        if not self.check_software_installed("xCAT"):
+            logger.info("xCAT existed")
+            return 0
         cmd="wget "+url+" -O - >/tmp/go-xcat"
         res=run_command(cmd,0)
         if res is 0:
@@ -589,11 +595,22 @@ class xcat_ha_utils:
         status =os.system(cmd)
         return status
 
+    def check_software_installed(self, package):
+        """check if software is installed or not"""
+        global setup_process_msg
+        setup_process_msg="Check "+package+" package..."
+        logger.info(setup_process_msg)
+        res=0
+        cmd="rpm -qa|grep "+package+" > /dev/null"
+        res=os.system(cmd)
+        return res
+
     def finditem(self, n, server):
         """add item into policy table"""
         index=bytes(n)
         cmd="lsdef -t policy |grep 1."+index
-        res=run_command(cmd,0)
+        logger.info(cmd)
+        res=os.system(cmd)
         if res is not 0:
             cmd="chdef -t policy 1."+index+" name="+server+" rule=trusted"
             res=run_command(cmd,0)
@@ -626,7 +643,8 @@ class xcat_ha_utils:
                     break
         if server:
             cmd="lsdef -t policy -i name|grep "+server
-            res=run_command(cmd,0)
+            logger.info(cmd)
+            res=os.system(cmd)
             if res is not 0:
                 res=self.finditem(3,server)
                 if res is 0:
@@ -781,7 +799,7 @@ class xcat_ha_utils:
             for ip in ips:
                 nip=ip.strip()
                 cmd='ifconfig|grep "inet '+nip+'  netmask" > /dev/null'
-                res=run_command(cmd,0)
+                res=os.system(cmd)
                 if res is 0:
                     cmd="cat "+ha_mn+"|grep "+nip+"|head -1"
                     host1=os.popen(cmd).read().strip()
@@ -892,6 +910,7 @@ class xcat_ha_utils:
                 logger.info("xCAT service has started [Dryrun]")
             else:
                 logger.info("xCAT service has started [Passed]")
+            self.source_xcat_profile()
             self.change_xcat_policy_attribute(args.nic, args.virtual_ip)
             self.deactivate_management_node(args.nic, args.virtual_ip, args.dbtype) 
         except:
