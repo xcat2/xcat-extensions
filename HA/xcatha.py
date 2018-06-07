@@ -608,8 +608,14 @@ class xcat_ha_utils:
     def finditem(self, n, server):
         """add item into policy table"""
         index=bytes(n)
+        global dryrun
+        return_code=0
         cmd="lsdef -t policy |grep 1."+index
-        logger.info(cmd)
+        if dryrun:
+            logger.info(cmd+"[Dryrun]")
+            return return_code
+        else:
+            logger.info(cmd) 
         res=os.system(cmd)
         if res is not 0:
             cmd="chdef -t policy 1."+index+" name="+server+" rule=trusted"
@@ -635,6 +641,8 @@ class xcat_ha_utils:
         filename="/etc/xcat/cert/server-cert.pem"
         word="Subject: CN="
         server=""
+        global dryrun
+        return_code=0
         with open(filename, 'r') as f:
             for l in f.readlines():
                 if word in l:
@@ -643,7 +651,11 @@ class xcat_ha_utils:
                     break
         if server:
             cmd="lsdef -t policy -i name|grep "+server
-            logger.info(cmd)
+            if dryrun:
+                logger.info(cmd+"[Dryrun]")
+                return return_code
+            else:
+                logger.info(cmd)
             res=os.system(cmd)
             if res is not 0:
                 res=self.finditem(3,server)
