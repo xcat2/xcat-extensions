@@ -111,7 +111,8 @@ class xcat_ha_utils:
         global setup_process_msg
         global dryrun
         setup_process_msg="Check virtual ip stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         cmd="ping -c 1 -w 10 "+vip
         if dryrun:
             logger.info(cmd + " [Dryrun]")
@@ -155,7 +156,8 @@ class xcat_ha_utils:
         global setup_process_msg
         global etc_hosts
         setup_process_msg="Start all services stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         if dbtype == 'mariadb':
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql':
@@ -273,7 +275,7 @@ class xcat_ha_utils:
 
     def configure_xcat_attribute(self, host, ip):
         "configure xcat MN attribute"
-        self.log_info("Configure xCAT management node attribute")
+        logger.info("Configure xCAT management node attribute")
         pass
 
     def current_database_type(self, path):
@@ -303,10 +305,11 @@ class xcat_ha_utils:
         """if current xCAT DB type is different from target type, switch DB to target type"""
         global setup_process_msg
         setup_process_msg="Check database type stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         current_dbtype=self.current_database_type("")
-        logger.debug("Current xCAT database type: "+current_dbtype)
-        logger.debug("Target xCAT database type: "+dbtype)
+        logger.info("Current xCAT database type: "+current_dbtype)
+        logger.info("Target xCAT database type: "+dbtype)
         target_dbtype="dbengine=dbtype"
         if current_dbtype != target_dbtype:
             physical_ip=self.get_original_ip()
@@ -324,7 +327,7 @@ class xcat_ha_utils:
         """check if xCAT data is in shared data directory"""
         global setup_process_msg
         setup_process_msg="Check if xCAT data is in shared data directory"
-        self.log_info(setup_process_msg)
+        logger.info(setup_process_msg)
         xcat_path=path+"/install"
         if os.path.exists(xcat_path):
             logger.info("There is xCAT data "+xcat_path+" in shared data "+path)
@@ -337,7 +340,8 @@ class xcat_ha_utils:
         """check if target dbtype is the same with shared data dbtype"""
         global setup_process_msg
         setup_process_msg="Check if target dbtype is the same with shared data dbtype stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         cfgfile=path+xcat_cfgloc
         share_data_db=""
         if os.path.exists(cfgfile):
@@ -352,7 +356,10 @@ class xcat_ha_utils:
             share_data_db="sqlite"
         logger.info("Database type is '"+share_data_db+"' in shared data directory")
         if share_data_db == tdbtype:
-            logger.info("Target database type is matched [Passed]")
+            if dryrun:
+                logger.info("Target database type is matched [Dryrun]")
+            else:
+                logger.info("Target database type is matched [Passed]")
         else:
             logger.error("Error: target database is not matched [Failed]")
             raise HaException("Error: "+setup_process_msg)
@@ -363,7 +370,8 @@ class xcat_ha_utils:
         res=self.install_db_package(dbtype)
         if res is 0:
             setup_process_msg="Switch to target database stage"
-            self.log_info(setup_process_msg)
+            print "============================================================================================"
+            logger.info(setup_process_msg)
             cmd_msg=""
             for key in xcatdb_password:
                 os.environ[key]=xcatdb_password[key]
@@ -399,7 +407,8 @@ class xcat_ha_utils:
         """install database package"""
         global setup_process_msg
         setup_process_msg="Install database package stage"
-        self.log_info("Installing database package ...")
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         os_name=platform.platform()
         res=1
         if os_name.__contains__("redhat"):
@@ -421,7 +430,8 @@ class xcat_ha_utils:
         """install stable xCAT"""
         global setup_process_msg
         setup_process_msg="Install xCAT stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         cmd="wget "+url+" -O - >/tmp/go-xcat"
         res=run_command(cmd,0)
         if res is 0:
@@ -431,10 +441,13 @@ class xcat_ha_utils:
                 cmd=xcat_install
                 res=run_command(cmd,0)
                 if res is 0:
-                    print "xCAT is installed [Passed]"
-                    os.environ["PATH"]=xcat_env+os.environ["PATH"]
-                    cmd="lsxcatd -v"
-                    run_command(cmd,0)
+                    if dryrun:
+                        logger.info("xCAT is installed [Dryrun]")
+                    else:
+                        logger.info("xCAT is installed [Passed]")
+                        os.environ["PATH"]=xcat_env+os.environ["PATH"]
+                        cmd="lsxcatd -v"
+                        run_command(cmd,0)
                     return 1
                 else:
                     logger.error("xCAT is installed [Failed]")
@@ -449,7 +462,8 @@ class xcat_ha_utils:
         global setup_process_msg
         global dryrun
         setup_process_msg="Configure virtual ip as alias ip stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         cmd="ifconfig "+nic+" "+vip+" "+" netmask "+mask
         res=run_command(cmd,0)
         if res is 1:
@@ -462,16 +476,15 @@ class xcat_ha_utils:
             resolvefile=open(resolv_file,'a')
             print name_server
             if dryrun:
-                self.log_info("Adding virtual ip "+vip+" into /etc/resolv.conf [Dryrun]")
+                logger.info("Adding virtual ip "+vip+" into /etc/resolv.conf [Dryrun]")
                 resolvefile.close()
                 return
-            self.log_info("Adding virtual ip "+vip+" into /etc/resolv.conf")
+            logger.info("Adding virtual ip "+vip+" into /etc/resolv.conf")
             resolvefile.write(name_server)
 
     def find_line(self, filename, keyword, exact_match=None):
         """find keyword from file"""
         key=keyword.strip()
-        logger.debug("Opening file " + filename + " to look for " + keyword)
         with open(filename,'r')as fp:
             list1 = fp.readlines()
             for line in list1:
@@ -489,7 +502,7 @@ class xcat_ha_utils:
     def save_original_host_and_ip(self):
         """"""
         global etc_hosts
-        self.log_info("Save physical hostname and ip")
+        logger.info("Save physical hostname and ip")
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
         physicalnet=physicalip+" "+physicalhost
@@ -513,8 +526,9 @@ class xcat_ha_utils:
         global setup_process_msg
         global dryrun
         global etc_hosts
-        setup_process_msg="Configure hostname stage for host " + host
-        self.log_info(setup_process_msg)
+        setup_process_msg="Configure hostname stage "
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         ip_and_host=ip+" "+host
         res=self.find_line(etc_hosts, ip_and_host)
         if res is 0:
@@ -552,7 +566,8 @@ class xcat_ha_utils:
         global setup_process_msg
         global dryrun
         setup_process_msg="Remove virtual IP stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         cmd="ifconfig "+nic+" 0.0.0.0 0.0.0.0 &>/dev/null"
         res=run_command(cmd,0,1)
         cmd="ip addr show |grep "+vip+" &>/dev/null"
@@ -569,7 +584,7 @@ class xcat_ha_utils:
         """check service status"""
         global setup_process_msg
         setup_process_msg="Check "+service_name+" service status"
-        self.log_info(setup_process_msg)
+        logger.info(setup_process_msg)
         cmd="systemctl status "+service_name+" > /dev/null"
         status =os.system(cmd)
         return status
@@ -598,7 +613,8 @@ class xcat_ha_utils:
         """add hostname into policy table"""
         global setup_process_msg
         setup_process_msg="Configure xCAT policy table stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         filename="/etc/xcat/cert/server-cert.pem"
         word="Subject: CN="
         server=""
@@ -617,7 +633,7 @@ class xcat_ha_utils:
                     return 0
             else:
                 loginfo=server+" exists in policy table."
-                logger.debug(loginfo)
+                logger.info(loginfo)
                 return 0
         else:
             loginfo="Get server name "+server+" [Failed]" 
@@ -649,7 +665,8 @@ class xcat_ha_utils:
         global setup_process_msg
         global dryrun
         setup_process_msg="Configure shared data directory stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
         #check if there is xcat data in shared data directory
         if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
             sharedfs.remove("/var/lib/mysql")
@@ -726,7 +743,8 @@ class xcat_ha_utils:
         """unconfigure shared data directory"""
         global setup_process_msg
         setup_process_msg="Unconfigure shared data directory stage"
-        self.log_info(setup_process_msg)
+        print "============================================================================================"
+        logger.info(setup_process_msg)
 
         if dbtype == 'postgresql' and sharedfs.__contains__("/var/lib/mysql"):
             sharedfs.remove("/var/lib/mysql")
@@ -735,15 +753,15 @@ class xcat_ha_utils:
         #1.check if there is xcat data in shared data directory
         #2.unlink data in shared data directory
         for sharedfs_link in sharedfs:
+            if dryrun:
+                logger.info("Removing symlink ..."+sharedfs_link+ " [Dryrun]")
+                continue
             if os.path.islink(sharedfs_link):
-                if dryrun:
-                    logger.info("Removing symlink ..."+sharedfs_link+ " [Dryrun]")
-                else:
-                    logger.info("Removing symlink ..."+sharedfs_link)
-                    os.unlink(sharedfs_link)
-                    logger.info("Restoring local directory ..."+sharedfs_link)
-                    if os.path.exists(sharedfs_link+".xcatbak") and not os.path.exists(sharedfs_link):
-                        shutil.move(sharedfs_link+".xcatbak", sharedfs_link)
+                logger.info("Removing symlink ..."+sharedfs_link)
+                os.unlink(sharedfs_link)
+                logger.info("Restoring local directory ..."+sharedfs_link)
+                if os.path.exists(sharedfs_link+".xcatbak") and not os.path.exists(sharedfs_link):
+                    shutil.move(sharedfs_link+".xcatbak", sharedfs_link)
 
     def get_hostname_for_ip(self,ip):
         """get hostname for the passed in ip"""
@@ -804,7 +822,8 @@ class xcat_ha_utils:
         """deactivate management node"""
         global setup_process_msg
         setup_process_msg="Deactivate stage"
-        self.log_info(setup_process_msg)
+        print "############################################################################################"
+        logger.info(setup_process_msg)
         self.clean_env(vip, nic, dbtype)
         self.disable_all_services(service_list, dbtype)
         self.stop_all_services(service_list, dbtype)
@@ -825,7 +844,8 @@ class xcat_ha_utils:
         try:
             global setup_process_msg
             setup_process_msg="Activate stage"
-            self.log_info(setup_process_msg)
+            print "############################################################################################"
+            logger.info(setup_process_msg)
             self.check_HA_directory(path)
             self.vip_check(vip)
             self.configure_vip(vip, nic, mask)
@@ -843,6 +863,7 @@ class xcat_ha_utils:
  
     def xcatha_setup_mn(self, args):
         """setup_mn process"""
+        global dryrun
         try:
             self.check_HA_directory(args.path) 
             self.vip_check(args.virtual_ip)
@@ -862,14 +883,15 @@ class xcat_ha_utils:
                 res=self.restart_service(dbservice)
                 if res:
                     logger.error("%s service did not start [Failed]" %dbservice) 
-                else:
-                    logger.info("%s service restart [Passed]" %dbservice)
             if self.check_service_status("xcatd") is not 0:
                 res=self.restart_service("xcatd")
                 if res:
                     logger.error("xCAT service did not start [Failed]")
                     raise HaException("Error: "+setup_process_msg)
-            logger.info("xCAT service has started [Passed]")
+            if dryrun:
+                logger.info("xCAT service has started [Dryrun]")
+            else:
+                logger.info("xCAT service has started [Passed]")
             self.change_xcat_policy_attribute(args.nic, args.virtual_ip)
             self.deactivate_management_node(args.nic, args.virtual_ip, args.dbtype) 
         except:
@@ -911,7 +933,7 @@ def main():
                 logger.error("Option -n is not valid for xCAT MN activation")
                 return 1
 
-            obj.log_info("Activating this node as xCAT primary MN")
+            logger.info("Activating this node as xCAT primary MN")
             obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
 
         if args.deactivate:
@@ -928,7 +950,7 @@ def main():
                 logger.error("Option -p is not valid for xCAT MN deactivation")
                 return 1
 
-            obj.log_info("Deactivating this node as xCAT standby MN")
+            logger.info("Deactivating this node as xCAT standby MN")
             dbtype=obj.current_database_type("")
             obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
 
@@ -943,7 +965,7 @@ def main():
             if not args.path:
                 logger.error("Option -p is required for xCAT MN setup")
                 return 1
-            obj.log_info("Setup this node as xCAT HA standby MN")
+            logger.info("Setup this node as xCAT HA standby MN")
             res=obj.xcatha_setup_mn(args)
             if res:
                 obj.clean_env(args.virtual_ip, args.nic, args.dbtype)            
