@@ -38,6 +38,9 @@ import pdb
 etc_hosts="/etc/hosts"
 dryrun=0
 xcat_url="https://raw.githubusercontent.com/xcat2/xcat-core/master/xCAT-server/share/xcat/tools/go-xcat"
+# Directories below will be linked to shared location specified by "-p" flag during setup and activation.
+#     they will also be unlinked during deactivation. If any of these directories are already on shared
+#     disk, remove then from shared_fs list
 shared_fs=['/install','/etc/xcat','/root/.xcat','/var/lib/pgsql','/var/lib/mysql','/tftpboot']
 xcat_cfgloc="/etc/xcat/cfgloc"
 xcat_install="/tmp/go-xcat --yes install"
@@ -249,9 +252,13 @@ class xcat_ha_utils:
         output=os.popen(cmd).read()
         if output:
             process="/etc/xcat/console.lock"
-            f=open(process, 'w') 
-            f.write(output)
-            f.close
+            if dryrun:
+                logger.info('Added "%s" to %s [Dryrun]' %(output, process))
+            else:
+                f=open(process, 'w') 
+                f.write(output)
+                logger.info('Added "%s" to %s' %(output, process))
+                f.close
         return_code=0
         for value in reversed(servicelist):
             if self.stop_service(value):
@@ -323,7 +330,7 @@ class xcat_ha_utils:
                     self.switch_database(dbtype,vip,physical_ip)
                     self.modify_db_configure_file(dbtype, path, physical_ip, vip)
         else:
-            logger.info("No need to switch dataase")
+            logger.info("No need to switch database")
 
     def check_xcat_exist_in_shared_data(self, path):
         """check if xCAT data is in shared data directory"""
@@ -363,7 +370,10 @@ class xcat_ha_utils:
             else:
                 logger.info("Target database type is matched [Passed]")
         else:
-            logger.error("Error: target database is not matched [Failed]")
+            if dryrun:
+                logger.error("Error: target database is not matched [Dryrun]")
+            else:
+                logger.error("Error: target database is not matched [Failed]")
             raise HaException("Error: "+setup_process_msg)
         
     def switch_database(self, dbtype, vip, physical_ip):
@@ -408,6 +418,7 @@ class xcat_ha_utils:
     def install_db_package(self, dbtype):
         """install database package"""
         global setup_process_msg
+        global dryrun
         setup_process_msg="Install database package stage"
         print "============================================================================================"
         logger.info(setup_process_msg)
@@ -415,7 +426,7 @@ class xcat_ha_utils:
         res=1
         if os_name.__contains__("redhat"):
             if not self.check_software_installed(dbtype):
-                logger.info(dbtype+" existed")
+                logger.info(dbtype+" already installed")
                 return 0    
             if dbtype == "postgresql":  
                 db_rpms="postgresql* perl-DBD-Pg"
@@ -428,7 +439,10 @@ class xcat_ha_utils:
             if res is not 0:
                 logger.error("install %s [Failed]" %db_rpms)
             else:
-                logger.info("install %s [Passed]" %db_rpms)     
+                if dryrun:
+                    logger.info("install %s [Dryrun]" %db_rpms)     
+                else:
+                    logger.info("install %s [Passed]" %db_rpms)     
         return res
 
     def install_xcat(self, url):
@@ -438,7 +452,7 @@ class xcat_ha_utils:
         print "============================================================================================"
         logger.info(setup_process_msg)
         if not self.check_software_installed("xCAT"):
-            logger.info("xCAT existed")
+            logger.info("xCAT already installed")
             return 0
         cmd="wget "+url+" -O - >/tmp/go-xcat"
         res=run_command(cmd,0)
@@ -591,8 +605,16 @@ class xcat_ha_utils:
     def check_service_status(self, service_name):
         """check service status"""
         global setup_process_msg
+        global dryrun
         setup_process_msg="Check "+service_name+" service status"
         logger.info(setup_process_msg)
+        if dryrun:
+            # In dryrun mode always return success.
+            #     Checking for service running is not destructive, but in dryrun mode
+            #     some services would not be started, so the check
+            #     will return failure which would prevent process from
+            #     continuing
+            return 0
         cmd="systemctl status "+service_name+" > /dev/null"
         status =os.system(cmd)
         return status
@@ -600,12 +622,21 @@ class xcat_ha_utils:
     def check_software_installed(self, package):
         """check if software is installed or not"""
         global setup_process_msg
-        setup_process_msg="Check "+package+" package..."
+        global dryrun
+        setup_process_msg="Checking if "+package+" is installed ..."
         logger.info(setup_process_msg)
         res=0
         cmd="rpm -qa|grep "+package+" > /dev/null"
         res=os.system(cmd)
-        return res
+        if dryrun:
+            # In dryrun mode always return success.
+            #     Checking for software being installed is not destructive, 
+            #     but in dryrun mode some services would not be installed,
+            #     so the check will return failure which would prevent process from
+            #     continuing
+            return 0
+        else:
+            return res
 
     def finditem(self, n, server):
         """add item into policy table"""
@@ -614,7 +645,7 @@ class xcat_ha_utils:
         return_code=0
         cmd="lsdef -t policy |grep 1."+index
         if dryrun:
-            logger.info(cmd+"[Dryrun]")
+            logger.info(cmd+" [Dryrun]")
             return return_code
         else:
             logger.info(cmd) 
@@ -637,24 +668,34 @@ class xcat_ha_utils:
     def change_xcat_policy_attribute(self, nic, vip):
         """add hostname into policy table"""
         global setup_process_msg
+        global dryrun
         setup_process_msg="Configure xCAT policy table stage"
         print "============================================================================================"
         logger.info(setup_process_msg)
         filename="/etc/xcat/cert/server-cert.pem"
         word="Subject: CN="
         server=""
-        global dryrun
         return_code=0
-        with open(filename, 'r') as f:
-            for l in f.readlines():
-                if word in l:
-                    linelist=l.split("=")
-                    server=linelist[1].strip()
-                    break
+        try:
+            with open(filename, 'r') as f:
+                for l in f.readlines():
+                    if word in l:
+                        linelist=l.split("=")
+                        server=linelist[1].strip()
+                        break
+        except IOError:
+            if dryrun:
+                # In dryrun if xCAT is not installed, this .pem file would not exist.
+                # Pretend it is there and return
+                logger.info("lsdef -t policy -i name [Dryrun]")
+                return 0
+            # Throw exception for not dryrun or in dryrun with xCAT installed
+            raise HaExeption(setup_process_msg)
+
         if server:
             cmd="lsdef -t policy -i name|grep "+server
             if dryrun:
-                logger.info(cmd+"[Dryrun]")
+                logger.info(cmd+" [Dryrun]")
                 return return_code
             else:
                 logger.info(cmd)
@@ -735,21 +776,30 @@ class xcat_ha_utils:
 
     def modify_db_configure_file(self, dbtype, dbpath, physical_ip, vip):
         """"""
+        global dryrun
         if dbtype == 'postgresql':
             dbfile=dbpath+pg_hba_conf
             if os.path.exists(dbfile):
                 res=self.find_line(dbfile, physical_ip)
                 if res is 0:
                     addline="host    all          all        "+physical_ip+"/32      md5"
-                    dbfile1=open(dbfile,'a')
-                    dbfile1.write(addline)
-                    dbfile1.close()
+                    if dryrun:
+                        logger.info('Added line "%s" to %s configuration file %s [Dryrun]' %(addline, dbtype, dbfile))
+                    else:
+                        dbfile1=open(dbfile,'a')
+                        dbfile1.write(addline)
+                        dbfile1.close()
+                        logger.info('Added line "%s" to %s configuration file %s' %(addline, dbtype, dbfile))
                 res=self.find_line(dbfile, vip)
                 if res is 0:
                     addline="host    all          all        "+vip+"/32      md5"
-                    dbfile1=open(dbfile,'a')
-                    dbfile1.write(addline)
-                    dbfile1.close()
+                    if dryrun:
+                        logger.info('Added line "%s" to %s configuration file %s [Dryrun]' %(addline, dbtype, dbfile))
+                    else:
+                        dbfile1=open(dbfile,'a')
+                        dbfile1.write(addline)
+                        dbfile1.close()
+                        logger.info('Added line "%s" to %s configuration file %s' %(addline, dbtype, dbfile))
             postgre_file=dbpath+postgresql_conf
             if os.path.exists(postgre_file):
                 listen_addr_line=os.popen("cat "+postgre_file+"|grep ^listen_addresses").readline()
@@ -1001,7 +1051,7 @@ def main():
             logger.info("Setup this node as xCAT HA standby MN")
             res=obj.xcatha_setup_mn(args)
             if res:
-                obj.clean_env(args.virtual_ip, args.nic, args.dbtype)            
+                obj.clean_env(args.virtual_ip, args.nic, args.dbtype)
     except HaException,e:
         logger.error(e.message)
         logger.error("Error encountered, starting to clean up the environment")
