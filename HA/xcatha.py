@@ -523,6 +523,7 @@ class xcat_ha_utils:
 
     def save_original_host_and_ip(self):
         """"""
+        global dryrun
         global etc_hosts
         logger.info("Save physical hostname and ip")
         physicalhost=self.get_hostname()
@@ -530,19 +531,25 @@ class xcat_ha_utils:
         physicalnet=physicalip+" "+physicalhost
         res=self.find_line(etc_hosts, physicalnet)
         if res is 0:
-            hostfile=open(etc_hosts,'a')
-            hostfile.write(physicalnet+"\n")
-            hostfile.close()
+            if dryrun:
+                logger.info("Write "+physicalnet+" into "+etc_hosts+" [Dryrun]")
+            else:
+                hostfile=open(etc_hosts,'a')
+                hostfile.write(physicalnet+"\n")
+                hostfile.close()
         mnfile="/tmp/ha_mn"
         if not os.path.exists(mnfile):
             nfile = open(mnfile,'w')
             nfile.close()
         res=self.find_line(mnfile, physicalnet)
         if res is 0:
-            mnfile=open(mnfile,'a')
-            mnfile.write(physicalnet+"\n")
-            mnfile.close()
-                                 
+            if dryrun is 1:
+                logger.info("Write "+physicalnet+" into "+mnfile+" [Dryrun]")
+            else:
+                mnfile=open(mnfile,'a')
+                mnfile.write(physicalnet+"\n")
+                mnfile.close() 
+                                
     def change_hostname(self, host, ip):
         """change hostname"""
         global setup_process_msg
@@ -769,10 +776,23 @@ class xcat_ha_utils:
                         # Remove backup if already there
                         shutil.rmtree(sharedfs_link+".xcatbak")
                     shutil.move(sharedfs_link, sharedfs_link+".xcatbak")
-                os.symlink(xcat_file_path, sharedfs_link)     
-        if os.path.exists("/tmp/ha_mn"):
-            cmd="cat /tmp/ha_mn >> /etc/xcat/ha_mn"
+                os.symlink(xcat_file_path, sharedfs_link)    
+        #save original host and ip into /etc/xcat/ha_mn 
+        etc_ha_mn="/etc/xcat/ha_mn"
+        if not os.path.exists(etc_ha_mn):
+            cmd="touch "+etc_ha_mn
             run_command(cmd,0)
+        original_host=self.get_original_host()
+        original_ip=self.get_original_ip()
+        ip_and_host=original_ip+" "+original_host
+        if dryrun:
+            logger.info("orignal ip and hostname:"+ip_and_host+" [Dryrun]")
+        else:
+            res=self.find_line(etc_ha_mn, ip_and_host)
+            if res is 0:
+                hamnfile=open(etc_ha_mn,'a')
+                hamnfile.write(ip_and_host)
+                hamnfile.close
 
     def modify_db_configure_file(self, dbtype, dbpath, physical_ip, vip):
         """"""
@@ -854,10 +874,10 @@ class xcat_ha_utils:
         """original hostname"""
         host1=""
         ha_mn=""
-        if os.path.exists("/etc/xcat/ha_mn"):
+        if os.path.exists("/tmp/ha_mn"):
+            ha_mn="/tmp/ha_mn" 
+        elif os.path.exists("/etc/xcat/ha_mn"):
             ha_mn="/etc/xcat/ha_mn"
-        elif os.path.exists("/tmp/ha_mn"):
-            ha_mn="/tmp/ha_mn"
         if ha_mn is not "":
             ips=os.popen("cat "+ha_mn+"|awk '{print $1}'").readlines()
             for ip in ips:
@@ -914,7 +934,7 @@ class xcat_ha_utils:
     def check_HA_directory(self, path):
         """check if there is HA directory exist or not"""
         if not os.path.exists(path):
-            raise HaException("Error:%s does not exist" %path) 
+            raise HaException("Error:"+path+" does not exist")
 
     def source_xcat_profile(self):
         """source xcat profile"""
