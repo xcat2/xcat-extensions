@@ -633,7 +633,7 @@ class xcat_ha_utils:
         setup_process_msg="Checking if "+package+" is installed ..."
         logger.info(setup_process_msg)
         res=0
-        cmd="rpm -qa|grep "+package+" > /dev/null"
+        cmd="rpm -q "+package+" > /dev/null"
         res=os.system(cmd)
         if dryrun:
             # In dryrun mode always return success.
