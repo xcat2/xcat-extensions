@@ -1094,7 +1094,6 @@ def main():
                 elif return_code is 0:
                     dryrun=0
                 obj.disable_all_services(service_list, dbtype)
-                logger.info("This machine is set to standby management node successfully...") 
         if args.setup:
             if not args.netmask:
                 args.netmask="255.255.255.0"
