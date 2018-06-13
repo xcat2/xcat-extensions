@@ -993,14 +993,36 @@ def parse_arguments():
     group.add_argument('-a', '--activate', help="activate node to be xCAT MN", action='store_true')
     group.add_argument('-d', '--deactivate', help="deactivate node to be xCAT MN", action='store_true')
     parser.add_argument('-p', dest="path", help="shared data directory path")
-    parser.add_argument('-v', dest="virtual_ip", required=True, help="virtual IP")
-    parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
+    parser.add_argument('-v', dest="virtual_ip", help="virtual IP")
+    parser.add_argument('-i', dest="nic", help="virtual IP network interface")
     parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
     parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
     parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mariadb'], help="database type")
     parser.add_argument('--dryrun', action="store_true", help="display steps without execution")
     args = parser.parse_args()
     return args
+
+def get_user_input():
+    retry=5
+    return_code=0
+    while True :
+        confirm=raw_input()
+        if confirm in ["Y", "Yes"]:
+            break
+        elif confirm in ["N", "No"]:
+            logger.info("Do nothing, exiting...")
+            return_code=2
+            break
+        elif confirm in ["D", "Dryrun"]:
+            return_code=1
+            break
+        else:
+            print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+            retry=retry-1
+        if retry < 1:
+            return_code=1
+            break
+    return return_code
 
 def main():
     global dryrun
@@ -1025,23 +1047,45 @@ def main():
             obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
 
         if args.deactivate:
-            if args.dbtype:
-                logger.error("Option -t is not valid for xCAT MN deactivation")
-                return 1
-            if args.netmask:
-                logger.error("Option -m is not valid for xCAT MN deactivation")
-                return 1
-            if args.host_name:
-                logger.error("Option -n is not valid for xCAT MN deactivation")
-                return 1
-            if args.path:
-                logger.error("Option -p is not valid for xCAT MN deactivation")
-                return 1
-
-            logger.info("Deactivating this node as xCAT standby MN")
             dbtype=obj.current_database_type("")
-            obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
-
+            if args.nic and args.virtual_ip:
+                logger.info("Deactivating this node as xCAT standby MN")
+                obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
+            else:
+                logger.info("[xCAT] Shutting down services:")
+                if dbtype == 'mariadb' and 'postgresql' in service_list:
+                    service_list.remove('postgresql')
+                elif dbtype == 'postgresql' and 'mariadb' in service_list:
+                    service_list.remove('mariadb')
+                elif dbtype == 'sqlite':
+                    if 'mariadb' in service_list:
+                        service_list.remove('mariadb')
+                    if 'postgresql' in service_list:
+                        service_list.remove('postgresql')
+                for service in reversed(service_list):
+                    print "... "+service
+                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+                return_code=get_user_input() 
+                if return_code is 2:
+                    return 1
+                elif return_code is 1:
+                    dryrun=1
+                elif return_code is 0:
+                    dryrun=0
+                obj.stop_all_services(service_list, dbtype)    
+                print "[xCAT] Disabling services from starting on reboot:"
+                for service in reversed(service_list):
+                    print "... "+service
+                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+                return_code=get_user_input()
+                if return_code is 2:
+                    return 1
+                elif return_code is 1:
+                    dryrun=1
+                elif return_code is 0:
+                    dryrun=0
+                obj.disable_all_services(service_list, dbtype)
+                
         if args.setup:
             if not args.netmask:
                 args.netmask="255.255.255.0"
