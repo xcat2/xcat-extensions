@@ -907,14 +907,24 @@ class xcat_ha_utils:
         self.unconfigure_shared_data(shared_fs,dbtype)
         self.unconfigure_vip(vip, nic)
 
+    def clean_vip_hostname(self, vip, nic):
+        """clean up VIP"""
+        restore_host_name=self.get_original_host()
+        restore_host_ip=self.get_original_ip()
+        if restore_host_name and restore_host_ip:
+            self.change_hostname(restore_host_name,restore_host_ip)
+        else:
+            logger.warning("Unable to restore original hostname")
+        self.unconfigure_vip(vip, nic)
+
     def deactivate_management_node(self, nic, vip, dbtype):
         """deactivate management node"""
         global setup_process_msg
         setup_process_msg="########## Deactivate stage ##########"
         logger.info(setup_process_msg)
-        self.clean_env(vip, nic, dbtype)
         self.disable_all_services(service_list, dbtype)
         self.stop_all_services(service_list, dbtype)
+        self.clean_vip_hostname(vip, nic)
         logger.info("This machine is set to standby management node successfully...")
 
     def check_HA_directory(self, path):
@@ -942,7 +952,6 @@ class xcat_ha_utils:
             else:
                 logger.error("Can not find the hostname to set")
             self.check_xcat_exist_in_shared_data(path)
-            self.configure_shared_data(path, shared_fs, dbtype)
             self.start_all_services(service_list, dbtype, restore_host_name)
             logger.info("This machine is set to primary management node successfully...")
         except:
@@ -1085,7 +1094,7 @@ def main():
                 elif return_code is 0:
                     dryrun=0
                 obj.disable_all_services(service_list, dbtype)
-                
+                logger.info("This machine is set to standby management node successfully...") 
         if args.setup:
             if not args.netmask:
                 args.netmask="255.255.255.0"
