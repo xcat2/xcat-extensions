@@ -163,9 +163,11 @@ class xcat_ha_utils:
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql' and 'mariadb' in servicelist:
             servicelist.remove('mariadb')
-        elif dbtype == 'sqlite' and 'postgresql' in servicelist and 'mariadb' in servicelist:
-            servicelist.remove('postgresql')
-            servicelist.remove('mariadb')
+        elif dbtype == 'sqlite':
+            if 'postgresql' in servicelist:
+                servicelist.remove('postgresql')
+            if 'mariadb' in servicelist:
+                servicelist.remove('mariadb')
         process_file="/etc/xcat/console.lock"
         if os.path.exists(process_file):
             with open(process_file,'rt') as handle:
