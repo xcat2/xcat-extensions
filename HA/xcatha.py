@@ -163,9 +163,11 @@ class xcat_ha_utils:
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql' and 'mariadb' in servicelist:
             servicelist.remove('mariadb')
-        elif dbtype == 'sqlite' and 'postgresql' in servicelist and 'mariadb' in servicelist:
-            servicelist.remove('postgresql')
-            servicelist.remove('mariadb')
+        elif dbtype == 'sqlite':
+            if 'postgresql' in servicelist:
+                servicelist.remove('postgresql')
+            if 'mariadb' in servicelist:
+                servicelist.remove('mariadb')
         process_file="/etc/xcat/console.lock"
         if os.path.exists(process_file):
             with open(process_file,'rt') as handle:
@@ -246,6 +248,11 @@ class xcat_ha_utils:
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql' and 'mariadb' in servicelist:
             servicelist.remove('mariadb')
+        elif dbtype == 'sqlite':
+            if 'postgresql' in servicelist:
+                servicelist.remove('postgresql')
+            if 'mariadb' in servicelist:
+                servicelist.remove('mariadb')
         cmd="ps -ef|grep 'conserver\|goconserver'|grep -v grep"
         output=os.popen(cmd).read()
         if output:
@@ -269,9 +276,11 @@ class xcat_ha_utils:
             servicelist.remove('postgresql')
         elif dbtype == 'postgresql' and 'mariadb' in servicelist:
             servicelist.remove('mariadb')
-        elif dbtype == 'sqlite' and 'mariadb' in servicelist and 'postgresql' in servicelist:
-            servicelist.remove('postgresql')
-            servicelist.remove('mariadb')
+        elif dbtype == 'sqlite':
+            if 'mariadb' in servicelist:
+                servicelist.remove('mariadb')
+            if 'postgresql' in servicelist:
+                servicelist.remove('mariadb')
         return_code=0
         for value in reversed(servicelist):
             if self.disable_service(value):
@@ -385,8 +394,7 @@ class xcat_ha_utils:
             if self.check_service_status("xcatd") is not 0:
                 if self.restart_service("xcatd"):  
                     raise HaException(setup_process_msg)   
-                else:
-                    os.environ["PATH"]=xcat_env+os.environ["PATH"]
+            self.source_xcat_profile()
             if dbtype == "postgresql":
                 cmd="pgsqlsetup -i -a "+vip+" -a "+physical_ip
                 cmd_msg="export XCATPGPW=xxxxxx;pgsqlsetup -i -a "+vip+" -a "+physical_ip
@@ -790,7 +798,7 @@ class xcat_ha_utils:
             if os.path.exists(dbfile):
                 res=self.find_line(dbfile, physical_ip)
                 if res is 0:
-                    addline="host    all          all        "+physical_ip+"/32      md5"
+                    addline="host    all          all        "+physical_ip+"/32      md5\n"
                     if dryrun:
                         logger.debug('Added line "%s" to %s configuration file %s [Dryrun]' %(addline, dbtype, dbfile))
                     else:
@@ -800,7 +808,7 @@ class xcat_ha_utils:
                         logger.debug('Added line "%s" to %s configuration file %s' %(addline, dbtype, dbfile))
                 res=self.find_line(dbfile, vip)
                 if res is 0:
-                    addline="host    all          all        "+vip+"/32      md5"
+                    addline="host    all          all        "+vip+"/32      md5\n"
                     if dryrun:
                         logger.debug('Added line "%s" to %s configuration file %s [Dryrun]' %(addline, dbtype, dbfile))
                     else:
@@ -907,14 +915,24 @@ class xcat_ha_utils:
         self.unconfigure_shared_data(shared_fs,dbtype)
         self.unconfigure_vip(vip, nic)
 
+    def clean_vip_hostname(self, vip, nic):
+        """clean up VIP"""
+        restore_host_name=self.get_original_host()
+        restore_host_ip=self.get_original_ip()
+        if restore_host_name and restore_host_ip:
+            self.change_hostname(restore_host_name,restore_host_ip)
+        else:
+            logger.warning("Unable to restore original hostname")
+        self.unconfigure_vip(vip, nic)
+
     def deactivate_management_node(self, nic, vip, dbtype):
         """deactivate management node"""
         global setup_process_msg
         setup_process_msg="########## Deactivate stage ##########"
         logger.info(setup_process_msg)
-        self.clean_env(vip, nic, dbtype)
         self.disable_all_services(service_list, dbtype)
         self.stop_all_services(service_list, dbtype)
+        self.clean_vip_hostname(vip, nic)
         logger.info("This machine is set to standby management node successfully...")
 
     def check_HA_directory(self, path):
@@ -942,7 +960,6 @@ class xcat_ha_utils:
             else:
                 logger.error("Can not find the hostname to set")
             self.check_xcat_exist_in_shared_data(path)
-            self.configure_shared_data(path, shared_fs, dbtype)
             self.start_all_services(service_list, dbtype, restore_host_name)
             logger.info("This machine is set to primary management node successfully...")
         except:
@@ -993,8 +1010,8 @@ def parse_arguments():
     group.add_argument('-a', '--activate', help="activate node to be xCAT MN", action='store_true')
     group.add_argument('-d', '--deactivate', help="deactivate node to be xCAT MN", action='store_true')
     parser.add_argument('-p', dest="path", help="shared data directory path")
-    parser.add_argument('-v', dest="virtual_ip", required=True, help="virtual IP")
-    parser.add_argument('-i', dest="nic", required=True, help="virtual IP network interface")
+    parser.add_argument('-v', dest="virtual_ip", help="virtual IP")
+    parser.add_argument('-i', dest="nic", help="virtual IP network interface")
     parser.add_argument('-n', dest="host_name", help="virtual IP hostname")
     parser.add_argument('-m', dest="netmask", help="virtual IP network mask")
     parser.add_argument('-t', dest="dbtype", choices=['postgresql', 'sqlite', 'mariadb'], help="database type")
@@ -1002,6 +1019,87 @@ def parse_arguments():
     args = parser.parse_args()
     return args
 
+def get_user_input(ignore_dryrun=None):
+    retry=5
+    return_code=0
+    while True :
+        confirm=raw_input()
+        if confirm in ["Y", "Yes"]:
+            break
+        elif confirm in ["N", "No"]:
+            logger.info("Do nothing, exiting...")
+            return_code=2
+            break
+        elif confirm in ["D", "Dryrun"]:
+            return_code=1
+            break
+        else:
+            if ignore_dryrun:
+                print "Continue? [[Y]es/[N]o]:"
+            else:
+                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+            retry=retry-1
+        if retry < 1:
+            return_code=1
+            break
+    return return_code
+
+def get_db_type_from_user():
+    retry=5
+    confirm=""
+    while True :
+        confirm=raw_input()
+        if confirm not in ["postgresql", "mariadb", "sqlite"]:
+            print "Enter DB type [postgresql/mariadb/sqlite]"
+            retry=retry-1
+        else:
+            break
+        if retry < 1:
+            break
+    return confirm
+
+def interactive_activate(obj,virtual_ip):
+    print "[Admin] Enter DB type [postgresql/mariadb/sqlite]:"
+    dbtype=get_db_type_from_user()  
+    print "[Admin] Verify VIP"+virtual_ip+" is configured in node"
+    print "Continue? [[Y]es/[N]o]:"
+    return_code=get_user_input(1)
+    if return_code is 2:
+        return 1
+    print "[Admin] Verify that the following is configured to be saved in shared storage and accessible from this node:"
+    if dbtype == 'mariadb' and '/var/lib/pgsql' in shared_fs:
+        shared_fs.remove('/var/lib/pgsql')
+    if dbtype == 'postgresql' and '/var/lib/mysql' in shared_fs:
+        shared_fs.remove('/var/lib/mysql')
+    for shfs in shared_fs:
+        print "... "+shfs
+    print "Continue? [[Y]es/[N]o]:"
+    return_code=get_user_input(1)
+    if return_code is 2:
+        return 1
+    print "[xCAT] Starting up services:"
+    if dbtype == 'mariadb' and 'postgresql' in service_list:
+        service_list.remove('postgresql')
+    elif dbtype == 'postgresql' and 'mariadb' in service_list:
+        service_list.remove('mariadb')
+    elif dbtype == 'sqlite':
+        if 'mariadb' in service_list:
+            service_list.remove('mariadb')
+        if 'postgresql' in service_list:
+            service_list.remove('postgresql')
+    for service in service_list:
+        print "... "+service
+    print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+    return_code=get_user_input()
+    if return_code is 2:
+        return 1
+    elif return_code is 1:
+        dryrun=1
+    elif return_code is 0:
+        dryrun=0
+    restore_host_name=obj.get_hostname_for_ip(virtual_ip)
+    obj.start_all_services(service_list, dbtype, restore_host_name)
+     
 def main():
     global dryrun
     args=parse_arguments()
@@ -1010,38 +1108,52 @@ def main():
         dryrun = 1
     try:
         if args.activate:
-            if not args.path:
-                logger.error("Option -p is required for xCAT MN activation")
-                return 1
-            if not args.netmask:
-                args.netmask="255.255.255.0"
-            if not args.dbtype:
-                args.dbtype="sqlite"
-            if args.host_name:
-                logger.error("Option -n is not valid for xCAT MN activation")
-                return 1
-
-            logger.info("Activating this node as xCAT primary MN")
-            obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
-
+            if args.nic and args.virtual_ip and args.path:
+                logger.info("Activating this node as xCAT primary MN")
+                obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
+            else:
+                interactive_activate(obj,args.virtual_ip) 
+                
         if args.deactivate:
-            if args.dbtype:
-                logger.error("Option -t is not valid for xCAT MN deactivation")
-                return 1
-            if args.netmask:
-                logger.error("Option -m is not valid for xCAT MN deactivation")
-                return 1
-            if args.host_name:
-                logger.error("Option -n is not valid for xCAT MN deactivation")
-                return 1
-            if args.path:
-                logger.error("Option -p is not valid for xCAT MN deactivation")
-                return 1
-
-            logger.info("Deactivating this node as xCAT standby MN")
             dbtype=obj.current_database_type("")
-            obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
-
+            if args.nic and args.virtual_ip:
+                logger.info("Deactivating this node as xCAT standby MN")
+                obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
+            else:
+                logger.info("[xCAT] Shutting down services:")
+                if dbtype == 'mariadb' and 'postgresql' in service_list:
+                    service_list.remove('postgresql')
+                elif dbtype == 'postgresql' and 'mariadb' in service_list:
+                    service_list.remove('mariadb')
+                elif dbtype == 'sqlite':
+                    if 'mariadb' in service_list:
+                        service_list.remove('mariadb')
+                    if 'postgresql' in service_list:
+                        service_list.remove('postgresql')
+                for service in reversed(service_list):
+                    print "... "+service
+                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+                return_code=get_user_input() 
+                if return_code is 2:
+                    return 1
+                elif return_code is 1:
+                    dryrun=1
+                elif return_code is 0:
+                    dryrun=0
+                obj.stop_all_services(service_list, dbtype)    
+                print "[xCAT] Disabling services from starting on reboot:"
+                for service in reversed(service_list):
+                    print "... "+service
+                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+                return_code=get_user_input()
+                if return_code is 2:
+                    return 1
+                elif return_code is 1:
+                    dryrun=1
+                elif return_code is 0:
+                    dryrun=0
+                obj.disable_all_services(service_list, dbtype)
+                logger.info("This machine is set to standby management node successfully...") 
         if args.setup:
             if not args.netmask:
                 args.netmask="255.255.255.0"
