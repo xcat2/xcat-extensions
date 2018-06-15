@@ -62,6 +62,10 @@ console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logger = logging.getLogger('xCAT-HA')
 logger.addHandler(console_handler)
 
+# User input strings
+user_input_yn  = "Continue? [[Y]es/[N]o]:"
+user_input_ynd = "Continue? [[Y]es/[N]o/[D]ryrun]:"
+
 def run_command(cmd, retry, ignore_fail=None):
     """execute and retry execute command"""
     global dryrun
@@ -1058,11 +1062,48 @@ def get_db_type_from_user():
             break
     return confirm
 
+def interactive_deactivate(obj,dbtype):
+    global dryrun
+    logger.info("[xCAT] Shutting down services:")
+    if dbtype == 'mariadb' and 'postgresql' in service_list:
+        service_list.remove('postgresql')
+    elif dbtype == 'postgresql' and 'mariadb' in service_list:
+        service_list.remove('mariadb')
+    elif dbtype == 'sqlite':
+        if 'mariadb' in service_list:
+            service_list.remove('mariadb')
+        if 'postgresql' in service_list:
+            service_list.remove('postgresql')
+    for service in reversed(service_list):
+        print "... "+service
+    print user_input_ynd
+    return_code=get_user_input() 
+    if return_code is 2:
+        return 1
+    elif return_code is 1:
+        dryrun=1
+    elif return_code is 0:
+        dryrun=0
+    obj.stop_all_services(service_list, dbtype)    
+    print "[xCAT] Disabling services from starting on reboot:"
+    for service in reversed(service_list):
+        print "... "+service
+    print user_input_ynd
+    return_code=get_user_input()
+    if return_code is 2:
+        return 1
+    elif return_code is 1:
+        dryrun=1
+    elif return_code is 0:
+        dryrun=0
+    obj.disable_all_services(service_list, dbtype)
+
 def interactive_activate(obj,virtual_ip):
+    global dryrun
     print "[Admin] Enter DB type [postgresql/mariadb/sqlite]:"
     dbtype=get_db_type_from_user()  
-    print "[Admin] Verify VIP"+virtual_ip+" is configured in node"
-    print "Continue? [[Y]es/[N]o]:"
+    print "[Admin] Verify VIP "+virtual_ip+" is configured on this node"
+    print user_input_yn
     return_code=get_user_input(1)
     if return_code is 2:
         return 1
@@ -1073,7 +1114,7 @@ def interactive_activate(obj,virtual_ip):
         shared_fs.remove('/var/lib/mysql')
     for shfs in shared_fs:
         print "... "+shfs
-    print "Continue? [[Y]es/[N]o]:"
+    print user_input_yn
     return_code=get_user_input(1)
     if return_code is 2:
         return 1
@@ -1089,7 +1130,7 @@ def interactive_activate(obj,virtual_ip):
             service_list.remove('postgresql')
     for service in service_list:
         print "... "+service
-    print "Continue? [[Y]es/[N]o/[D]ryrun]:"
+    print user_input_ynd
     return_code=get_user_input()
     if return_code is 2:
         return 1
@@ -1112,6 +1153,8 @@ def main():
                 logger.info("Activating this node as xCAT primary MN")
                 obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
             else:
+                if not args.virtual_ip:
+                     args.virtual_ip = obj.get_ip_from_hostname()
                 interactive_activate(obj,args.virtual_ip) 
                 
         if args.deactivate:
@@ -1120,40 +1163,8 @@ def main():
                 logger.info("Deactivating this node as xCAT standby MN")
                 obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
             else:
-                logger.info("[xCAT] Shutting down services:")
-                if dbtype == 'mariadb' and 'postgresql' in service_list:
-                    service_list.remove('postgresql')
-                elif dbtype == 'postgresql' and 'mariadb' in service_list:
-                    service_list.remove('mariadb')
-                elif dbtype == 'sqlite':
-                    if 'mariadb' in service_list:
-                        service_list.remove('mariadb')
-                    if 'postgresql' in service_list:
-                        service_list.remove('postgresql')
-                for service in reversed(service_list):
-                    print "... "+service
-                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
-                return_code=get_user_input() 
-                if return_code is 2:
-                    return 1
-                elif return_code is 1:
-                    dryrun=1
-                elif return_code is 0:
-                    dryrun=0
-                obj.stop_all_services(service_list, dbtype)    
-                print "[xCAT] Disabling services from starting on reboot:"
-                for service in reversed(service_list):
-                    print "... "+service
-                print "Continue? [[Y]es/[N]o/[D]ryrun]:"
-                return_code=get_user_input()
-                if return_code is 2:
-                    return 1
-                elif return_code is 1:
-                    dryrun=1
-                elif return_code is 0:
-                    dryrun=0
-                obj.disable_all_services(service_list, dbtype)
-                logger.info("This machine is set to standby management node successfully...") 
+                interactive_deactivate(obj,dbtype) 
+            logger.info("This machine is set to standby management node successfully...") 
         if args.setup:
             if not args.netmask:
                 args.netmask="255.255.255.0"
