@@ -1098,17 +1098,18 @@ def interactive_deactivate(obj,dbtype):
         dryrun=0
     obj.disable_all_services(service_list, dbtype)
 
-def interactive_activate(obj,virtual_ip):
+def interactive_activate(obj,virtual_ip,dbtype):
     global dryrun
-    print "[Admin] Enter DB type [postgresql/mariadb/sqlite]:"
-    dbtype=get_db_type_from_user()  
     print "[Admin] Verify VIP "+virtual_ip+" is configured on this node"
     print user_input_yn
     return_code=get_user_input(1)
     if return_code is 2:
         return 1
     print "[Admin] Verify that the following is configured to be saved in shared storage and accessible from this node:"
+
     if dbtype == 'mariadb' and '/var/lib/pgsql' in shared_fs:
+        shared_fs.remove('/var/lib/pgsql')
+    if dbtype == 'sqlite' and '/var/lib/pgsql' in shared_fs:
         shared_fs.remove('/var/lib/pgsql')
     if dbtype == 'postgresql' and '/var/lib/mysql' in shared_fs:
         shared_fs.remove('/var/lib/mysql')
@@ -1155,7 +1156,10 @@ def main():
             else:
                 if not args.virtual_ip:
                      args.virtual_ip = obj.get_ip_from_hostname()
-                interactive_activate(obj,args.virtual_ip) 
+                if not args.dbtype:
+                     # Default to postgresql
+                     args.dbtype = "postgresql"
+                interactive_activate(obj,args.virtual_ip,args.dbtype) 
                 
         if args.deactivate:
             dbtype=obj.current_database_type("")
