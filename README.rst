@@ -36,9 +36,6 @@ Setup xCAT HA Management Node
 
 This section use ``xcatha.py`` to setup xCAT HA management node.
 
-xCAT is not installed on 2 xCAT MN nodes
-````````````````````````````````````````
-
 ``host1`` is installed as xCAT primary MN, ``host2`` is installed as xCAT standby MN. They can access `xcat.org <http://xcat.org/>`_
 
     #. Copy `xcatha.py <https://github.com/xcat2/xcat-extensions/tree/master/HA/xcatha.py>`_ on ``host1``, execute ``xcatha.py`` to setup and configure ``host1`` using ``VIP`` and ``hostname`` as xCAT standby MN::
