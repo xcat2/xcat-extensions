@@ -56,21 +56,6 @@ Scenario 1: xCAT is not installed on 2 xCAT MN nodes
       
         python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn  
 
-Scenario 2: user has xCAT MN host1, he wants to add new node host2 as xCAT standby MN node
-``````````````````````````````````````````````````````````````````````````````````````````
-
-    #. The original xCAT MN ``host1`` IP ``10.5.106.50`` becomes virtual IP, user should add another IP like ``10.5.106.5`` for the NIC ``eth0``. Copy `xcatha.py <https://github.com/xcat2/xcat-extensions/tree/master/HA/xcatha.py>`_ on ``host1``, setup ``host1`` as standby MN::
-
-        python xcatha.py -s -p /HA -v 10.5.106.50 -i eth0:0 -n hamn 
-
-    #. Copy ``xcatha.py`` on ``host2``, execute ``xcatha.py`` to setup and configure ``host2`` as a xCAT standby MN::
-        
-        python xcatha.py -s -p /HA -v 10.5.106.50 -i eth0:0 -n hamn 
-
-    #. Activate ``host1`` as xCAT primary active MN::
-  
-        python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn  
-
 Failover
 --------
 
