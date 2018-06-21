@@ -1,6 +1,3 @@
-Setup xCAT HA MN Node With Shared Data
-======================================
-
 This documentation illustrates how to use ``xcatha.py`` script to setup xCAT primary and standby management nodes to provide high availability management capability, using shared data between the two management nodes. 
 
 xCAT ships a script `xcatha.py <https://github.com/xcat2/xcat-extensions/tree/master/HA/xcatha.py>`_ to setup a xCAT HA management node and execute failover. 
@@ -32,15 +29,15 @@ User should prepare the followings before setup shared data based xCAT HA manage
 
     #. Optional net mask for virtual IP, default value is ``255.255.255.0``
 
-    #. Optional database type, supported choices are ``postgresql`` or ``mariadb`` or ``sqlite``, default is ``sqlite``
+    #. Optional database type, supported choices are ``postgresql`` or ``mariadb`` or ``sqlite``, default is ``postgresql``
 
 Setup xCAT HA Management Node
 -----------------------------
 
 This section use ``xcatha.py`` to setup xCAT HA management node.
 
-Scenario 1: xCAT is not installed on 2 xCAT MN nodes
-````````````````````````````````````````````````````
+xCAT is not installed on 2 xCAT MN nodes
+````````````````````````````````````````
 
 ``host1`` is installed as xCAT primary MN, ``host2`` is installed as xCAT standby MN. They can access `xcat.org <http://xcat.org/>`_
 
