@@ -178,8 +178,10 @@ class xcat_ha_utils:
                 for ln in handle:
                     if 'goconserver' in ln:
                         servicelist.remove('conserver')
+                        break
                     else:
                         servicelist.remove('goconserver')
+                        break
         else:
             servicelist.remove('conserver')
             servicelist.remove('goconserver')
@@ -206,6 +208,7 @@ class xcat_ha_utils:
                     else:
                         # Domain in the site table, 
                         domain_in_site=1
+                        host_name=host_name.strip()
                         long_name = self.find_line(etc_hosts, host_name+'.')
                         if long_name is 1:
                             # long hostname in /etc/hosts
@@ -866,7 +869,7 @@ class xcat_ha_utils:
 
     def get_hostname_for_ip(self,ip):
         """get hostname for the passed in ip"""
-        hostname=os.popen("getent hosts "+ip+" | awk -F ' ' '{print $2}' | uniq").read()
+        hostname=os.popen("getent hosts "+ip+" | awk -F ' ' '{print $2}' | awk -F'.' '{print $1}'| uniq").read()
         return hostname
 
     def get_hostname_original_ip(self):
