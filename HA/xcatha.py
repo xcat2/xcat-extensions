@@ -1149,6 +1149,7 @@ def main():
     global dryrun
     args=parse_arguments()
     obj=xcat_ha_utils()
+    interactive=False
     if args.dryrun:
         dryrun = 1
     try:
@@ -1162,6 +1163,7 @@ def main():
                 if not args.dbtype:
                      # Default to postgresql
                      args.dbtype = "postgresql"
+                interactive=True
                 interactive_activate(obj,args.virtual_ip,args.dbtype) 
                 
         if args.deactivate:
@@ -1170,6 +1172,7 @@ def main():
                 logger.info("Deactivating this node as xCAT standby MN")
                 obj.deactivate_management_node(args.nic, args.virtual_ip, dbtype)
             else:
+                interactive=True
                 interactive_deactivate(obj,dbtype) 
             logger.info("This machine is set to standby management node successfully...") 
         if args.setup:
@@ -1190,7 +1193,8 @@ def main():
     except HaException,e:
         logger.error(e.message)
         logger.error("Error encountered, starting to clean up the environment")
-        obj.clean_env(args.virtual_ip, args.nic, args.dbtype)
+        if interactive is False:
+            obj.clean_env(args.virtual_ip, args.nic, args.dbtype)
         return 1
 
 if __name__ == "__main__":
