@@ -919,7 +919,6 @@ class xcat_ha_utils:
         else:
 
             logger.warning("Unable to restore original hostname")
-        self.unconfigure_shared_data(shared_fs,dbtype)
         self.unconfigure_vip(vip, nic)
 
     def clean_vip_hostname(self, vip, nic):
@@ -1156,6 +1155,8 @@ def main():
         if args.activate:
             if args.nic and args.virtual_ip and args.path:
                 logger.info("Activating this node as xCAT primary MN")
+                if not args.netmask:
+                    args.netmask="255.255.255.0"
                 obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
             else:
                 if not args.virtual_ip:
@@ -1179,7 +1180,7 @@ def main():
             if not args.netmask:
                 args.netmask="255.255.255.0"
             if not args.dbtype:
-                args.dbtype="sqlite"
+                args.dbtype="postgresql"
             if not args.host_name:
                 logger.error("Option -n is required for xCAT HA setup")
                 return 1
