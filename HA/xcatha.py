@@ -1157,7 +1157,8 @@ def main():
                 logger.info("Activating this node as xCAT primary MN")
                 if not args.netmask:
                     args.netmask="255.255.255.0"
-                obj.activate_management_node(args.nic, args.virtual_ip, args.dbtype, args.path, args.netmask)
+                dbtype=obj.current_database_type("")
+                obj.activate_management_node(args.nic, args.virtual_ip, dbtype, args.path, args.netmask)
             else:
                 if not args.virtual_ip:
                      args.virtual_ip = obj.get_ip_from_hostname()
