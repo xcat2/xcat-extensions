@@ -34,6 +34,7 @@ import pwd
 import grp
 import socket
 import pdb
+import re
 
 etc_hosts="/etc/hosts"
 dryrun=0
@@ -500,7 +501,7 @@ class xcat_ha_utils:
         #add virtual ip into /etc/resolve.conf
         name_server="nameserver "+vip
         resolv_file="/etc/resolv.conf"
-        res=self.find_line(resolv_file, name_server)
+        res=self.find_line(resolv_file, vip)
         if res is 0:
             resolvefile=open(resolv_file,'a')
             print name_server
@@ -524,7 +525,7 @@ class xcat_ha_utils:
                         return 1
                 else:
                     # Substring match
-                    if key in line:
+                    if re.search(r'\b%s\b' % key, line):
                         return 1
         return 0
 
@@ -536,7 +537,7 @@ class xcat_ha_utils:
         physicalhost=self.get_hostname()
         physicalip=self.get_ip_from_hostname()
         physicalnet=physicalip+" "+physicalhost
-        res=self.find_line(etc_hosts, physicalnet)
+        res=self.find_line(etc_hosts, physicalip)
         if res is 0:
             if dryrun:
                 logger.info("Write "+physicalnet+" into "+etc_hosts+" [Dryrun]")
@@ -565,23 +566,17 @@ class xcat_ha_utils:
         setup_process_msg="===> Configure hostname stage <==="
         logger.info(setup_process_msg)
         ip_and_host=ip+" "+host
-        res=self.find_line(etc_hosts, ip_and_host)
+        res=self.find_line(etc_hosts, ip)
         if res is 0:
+            # Check if host is a long hostname.
+            if '.' in host:
+                # Passed in hostname is a long format.
+                # Add short name to etc/hosts also
+                ip_and_host=ip_and_host+" "+host.split('.',1)[0]
             hostfile=open(etc_hosts,'a')
             if not dryrun:
                 hostfile.write(ip_and_host+"\n")
             hostfile.close()
-        # Check if host is a long hostname.
-        if '.' in host:
-            # Passed in hostname is a long format.
-            # Add short name to etc/hosts also
-            ip_and_host=ip+" "+host.split('.',1)[0]
-            res=self.find_line(etc_hosts, ip_and_host, 1)
-            if res is 0:
-                hostfile=open(etc_hosts,'a')
-                if not dryrun:
-                    hostfile.write(ip_and_host+"\n")
-                hostfile.close()
         cmd="hostname "+host.strip()
         res=run_command(cmd,0)
 
