@@ -17,19 +17,19 @@ Pre-requirements for User
 
 User should prepare the followings before setup shared data based xCAT HA management node:
 
-    #. Two nodes with the same OS are ready, for example: ``host1`` and ``host2``
+#. Two nodes with the same OS are ready, for example: ``host1`` and ``host2``
 
-    #. Setup shared data location (for example ``/HA``) accessible from both ``host1`` and ``host2`` nodes are ready.
+#. Setup shared data location (for example ``/HA``) accessible from both ``host1`` and ``host2`` nodes are ready.
 
-    #. Prepare virtual IP, for example: ``10.5.106.50``
+#. Prepare virtual IP, for example: ``10.5.106.50``
 
-    #. Prepare the NIC that the virtual IP address attaches to, for example: ``eth0:0``
+#. Prepare the NIC that the virtual IP address attaches to, for example: ``eth0:0``
 
-    #. Prepare virtual IP's hostname, for example: ``hamn``
+#. Prepare virtual IP's hostname, for example: ``hamn``
 
-    #. Optional net mask for virtual IP, default value is ``255.255.255.0``
+#. Optional net mask for virtual IP, default value is ``255.255.255.0``
 
-    #. Optional database type, supported choices are ``postgresql`` or ``mariadb`` or ``sqlite``, default is ``postgresql``
+#. Optional database type, supported choices are ``postgresql`` or ``mariadb`` or ``sqlite``, default is ``postgresql``
 
 Setup xCAT HA Management Node
 -----------------------------
@@ -38,17 +38,17 @@ This section use ``xcatha.py`` to setup xCAT HA management node.
 
 ``host1`` is installed as xCAT primary MN, ``host2`` is installed as xCAT standby MN. They can access `xcat.org <http://xcat.org/>`_
 
-    #. Copy `xcatha.py <https://github.com/xcat2/xcat-extensions/tree/master/HA/xcatha.py>`_ on ``host1``, execute ``xcatha.py`` to setup and configure ``host1`` using ``VIP`` and ``hostname`` as xCAT standby MN::
+#. Copy `xcatha.py <https://github.com/xcat2/xcat-extensions/tree/master/HA/xcatha.py>`_ on ``host1``, execute ``xcatha.py`` to setup and configure ``host1`` using ``VIP`` and ``hostname`` as xCAT standby MN::
 
-        python xcatha.py -s -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
+    python xcatha.py -s -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
 
-    #. Copy ``xcatha.py`` on ``host2``, execute ``xcatha.py`` to setup and configure ``host2`` using ``VIP` and ``hostname`` as xCAT standby MN::
+#. Copy ``xcatha.py`` on ``host2``, execute ``xcatha.py`` to setup and configure ``host2`` using ``VIP` and ``hostname`` as xCAT standby MN::
 
-        python xcatha.py -s -p /HA -v 10.5.106.50 -i eth0:0 -n hamn 
+    python xcatha.py -s -p /HA -v 10.5.106.50 -i eth0:0 -n hamn 
 
-    #. Activate ``host1`` as xCAT primary active MN::
+#. Activate ``host1`` as xCAT primary active MN::
       
-        python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn  
+    python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn  
 
 Failover
 --------
@@ -62,25 +62,25 @@ Planned failover: active xCAT MN host1 has problems, but OS is still accessible
 
 This Scenario can execute a planned failover.
 
-    #. Execute ``xcatha.py`` on ``host1`` to deactivate ``host1`` as non-active xcat MN node::
+#. Execute ``xcatha.py`` on ``host1`` to deactivate ``host1`` as non-active xcat MN node::
 
-        python xcatha.py -d -v 10.5.106.50 -i eth0:0
+    python xcatha.py -d -v 10.5.106.50 -i eth0:0
 
-    #. Execute ``xcatha.py`` on ``host2`` to activate ``host2`` as active xcat MN node::
+#. Execute ``xcatha.py`` on ``host2`` to activate ``host2`` as active xcat MN node::
 
-        python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
+    python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
 
 Unplanned failover: active xCAT MN host1 is not accessible
 ``````````````````````````````````````````````````````````
 
 Reboot this xCAT MN node ``host1``, after it boots:
 
-    #. if we can access to its OS, we can execute a planned failover, the steps are the same with above **Secenairo 1: active xCAT MN host1 is broken and we can access to its OS**.
+#. if we can access to its OS, we can execute a planned failover, the steps are the same with above **Secenairo 1: active xCAT MN host1 is broken and we can access to its OS**.
 
-    #. if we cannot access to ``host1`` OS 
+#. if we cannot access to ``host1`` OS 
 
-        #. Execute ``xcatha.py`` on ``host2`` to activate ``host2`` as active xcat MN node::
+    #. Execute ``xcatha.py`` on ``host2`` to activate ``host2`` as active xcat MN node::
 
-            python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
+        python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
 
-        #. Recommend recover ``host1``.
+    #. Recommend recover ``host1``.
