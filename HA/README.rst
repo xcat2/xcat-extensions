@@ -78,9 +78,9 @@ Reboot this xCAT MN node ``host1``, after it boots:
 #. if we can access to its OS, we can execute a planned failover, the steps are the same with above **Secenairo 1: active xCAT MN host1 is broken and we can access to its OS**.
 
 #. if we cannot access to ``host1`` OS 
-
+    
     #. Execute ``xcatha.py`` on ``host2`` to activate ``host2`` as active xcat MN node::
-
+    
         python xcatha.py -a -p /HA -v 10.5.106.50 -i eth0:0 -n hamn
-
+    
     #. Recommend recover ``host1``.
