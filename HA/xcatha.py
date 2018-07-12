@@ -1187,6 +1187,7 @@ def main():
             res=obj.xcatha_setup_mn(args)
             if res:
                 obj.clean_env(args.virtual_ip, args.nic, args.dbtype)
+                return 1
     except HaException,e:
         logger.error(e.message)
         logger.error("Error encountered, starting to clean up the environment")
