@@ -789,7 +789,7 @@ class xcat_ha_utils:
             res=self.find_line(etc_ha_mn, ip_and_host)
             if res is 0:
                 hamnfile=open(etc_ha_mn,'a')
-                hamnfile.write(ip_and_host)
+                hamnfile.write(ip_and_host+"\n")
                 hamnfile.close
 
     def modify_db_configure_file(self, dbtype, dbpath, physical_ip, vip):
