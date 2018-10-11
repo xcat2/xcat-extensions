@@ -106,6 +106,10 @@ rm -fr $tmpdir
 disk1=$(tail -n +1 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1)
 disk2=$(tail -n +2 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1)
 
+# erase all existing md RAIDs
+mdadm --stop /dev/md/*
+mdadm --zero-superblock ${disk1}*
+mdadm --zero-superblock ${disk2}*
 
 ########################################################################
 # Part 2: create the partition scheme file /tmp/partitionfile
