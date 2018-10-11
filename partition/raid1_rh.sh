@@ -106,6 +106,11 @@ rm -fr $tmpdir
 disk1=$(tail -n +1 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1)
 disk2=$(tail -n +2 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1)
 
+# disable md RAID resync during installation
+# this speeds up the installation process significantly
+echo 0 > /proc/sys/dev/raid/speed_limit_max
+echo 0 > /proc/sys/dev/raid/speed_limit_min
+
 # erase all existing md RAIDs
 mdadm --stop /dev/md/*
 mdadm --zero-superblock ${disk1}*
