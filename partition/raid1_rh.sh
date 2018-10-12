@@ -107,7 +107,8 @@ disk1=$(sed '1q;d' /tmp/xcat_sorted_disks |cut -d'|' -f 2|cut -d' ' -f1)
 disk2=$(sed '2q;d' /tmp/xcat_sorted_disks |cut -d'|' -f 2|cut -d' ' -f1)
 
 # disable md RAID resync during installation
-# this speeds up the installation process significantly
+# this speeds up the ignstallation process significantly
+echo "[$0] disabling md RAID resync during installation"
 echo 0 > /proc/sys/dev/raid/speed_limit_max
 echo 0 > /proc/sys/dev/raid/speed_limit_min
 
@@ -121,9 +122,12 @@ disk2_mds=$(awk '/ '${disk2_sd}'[0-9]+\[/ {sub("md","");print $1}' /proc/mdstat)
 all_mds=$(printf '%s\n%s' "$disk1_mds" "$disk2_mds" | sort -u)
 
 for md in $all_mds; do
+    echo "[$0] stopping md device: /dev/md/${md}"
     mdadm --stop /dev/md/${md}
 done
+echo "[$0] zeroing superblocks of ${disk1}-part*"
 mdadm --zero-superblock ${disk1}-part*
+echo "[$0] zeroing superblocks of ${disk2}-part*"
 mdadm --zero-superblock ${disk2}-part*
 
 ########################################################################
