@@ -113,24 +113,36 @@ disk2=$(tail -n +2 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1
 cat > /tmp/partitionfile << EOF
 zerombr
 clearpart --all
+#
+# Petitboot boot helper partition 8 MB
 part None --fstype "PPC PReP Boot" --ondisk $disk1 --size 8
 part None --fstype "PPC PReP Boot" --ondisk $disk2 --size 8
-#Full RAID 1 Sample
-part raid.01 --size 512 --ondisk $disk1
-part raid.02 --size 512 --ondisk $disk2
+#
+# /boot 1 GB
+part raid.01 --size 1000 --ondisk $disk1
+part raid.02 --size 1000 --ondisk $disk2
 raid /boot --level 1 --device md0 raid.01 raid.02
 #
+# / remainder
 part raid.11 --size 1 --grow --ondisk $disk1
 part raid.12 --size 1 --grow --ondisk $disk2
 raid / --level 1 --device md1 raid.11 raid.12
 #
-part raid.21 --size 1024 --ondisk $disk1
-part raid.22 --size 1024 --ondisk $disk2
+# /var 10 GB
+part raid.21 --size 10000 --ondisk $disk1
+part raid.22 --size 10000 --ondisk $disk2
 raid /var --level 1 --device md2 raid.21 raid.22
 #
-part raid.31 --size 1024 --ondisk $disk1
-part raid.32 --size 1024 --ondisk $disk2
-raid swap --level 1 --device md3 raid.31 raid.32
+# /tmp 10 GB
+part raid.31 --size 10000 --ondisk $disk1
+part raid.32 --size 10000 --ondisk $disk2
+raid /tmp --level 1 --device md3 raid.31 raid.32
+#
+# swap 4 GB
+part raid.41 --size 4000 --ondisk $disk1
+part raid.42 --size 4000 --ondisk $disk2
+raid swap --level 1 --device md4 raid.41 raid.42
+
 
 bootloader --boot-drive=$disk1
 EOF
