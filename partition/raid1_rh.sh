@@ -103,8 +103,8 @@ echo "[$0] the output file is: $output_file"
 rm -fr $tmpdir
 
 
-disk1=$(tail -n +1 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1)
-disk2=$(tail -n +2 /tmp/xcat_sorted_disks|head -n1 |cut -d'|' -f 2|cut -d' ' -f1)
+disk1=$(sed '1q;d' /tmp/xcat_sorted_disks |cut -d'|' -f 2|cut -d' ' -f1)
+disk2=$(sed '2q;d' /tmp/xcat_sorted_disks |cut -d'|' -f 2|cut -d' ' -f1)
 
 # disable md RAID resync during installation
 # this speeds up the installation process significantly
