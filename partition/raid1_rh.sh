@@ -112,9 +112,19 @@ echo 0 > /proc/sys/dev/raid/speed_limit_max
 echo 0 > /proc/sys/dev/raid/speed_limit_min
 
 # erase all existing md RAIDs
-mdadm --stop /dev/md/*
-mdadm --zero-superblock ${disk1}*
-mdadm --zero-superblock ${disk2}*
+disk1_sd=$(sed '1q;d' /tmp/xcat_sorted_disks |cut -d'|' -f 1)
+disk2_sd=$(sed '2q;d' /tmp/xcat_sorted_disks |cut -d'|' -f 1)
+# search for all md RAIDs on disk1 and disk2
+disk1_mds=$(awk '/ '${disk1_sd}'[0-9]+\[/ {sub("md","");print $1}' /proc/mdstat)
+disk2_mds=$(awk '/ '${disk2_sd}'[0-9]+\[/ {sub("md","");print $1}' /proc/mdstat)
+# get all unique md RAIDs
+all_mds=$(printf '%s\n%s' "$disk1_mds" "$disk2_mds" | sort -u)
+
+for md in $all_mds; do
+    mdadm --stop /dev/md/${md}
+done
+mdadm --zero-superblock ${disk1}-part*
+mdadm --zero-superblock ${disk2}-part*
 
 ########################################################################
 # Part 2: create the partition scheme file /tmp/partitionfile
